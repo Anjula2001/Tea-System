@@ -16,12 +16,17 @@ import { useTeaStore } from '@/store/tea-store';
 
 export default function BulkCreationScreen() {
   const router = useRouter();
+  const factories = useTeaStore((s) => s.factories);
+  const selectedFactoryId = useTeaStore((s) => s.selectedFactoryId);
+  const setSelectedFactoryId = useTeaStore((s) => s.setSelectedFactoryId);
   const teaGrades = useTeaStore((s) => s.teaGrades);
   const globalPrice = useTeaStore((s) => s.globalPrice);
   const calculateBulkMetrics = useTeaStore((s) => s.calculateBulkMetrics);
   const addBulkSet = useTeaStore((s) => s.addBulkSet);
 
-  const [batchName, setBatchName] = useState<string>(`BATCH-2026-${Date.now().toString().slice(-4)}`);
+  const activeFactory = factories.find((f) => f.id === selectedFactoryId) || factories[0];
+
+  const [batchName, setBatchName] = useState<string>(`BATCH-${activeFactory.code}-${Date.now().toString().slice(-4)}`);
   const [quantities, setQuantities] = useState<Record<string, string>>({
     'op1-34': '4000',
     'pekoe-36': '3000',
@@ -42,8 +47,8 @@ export default function BulkCreationScreen() {
   }, [quantities]);
 
   const metrics = useMemo(() => {
-    return calculateBulkMetrics(selectedItems);
-  }, [selectedItems, calculateBulkMetrics]);
+    return calculateBulkMetrics(selectedItems, activeFactory.id);
+  }, [selectedItems, activeFactory.id, calculateBulkMetrics]);
 
   const handleCreateBulkSet = () => {
     if (metrics.totalQuantityKg === 0) {
@@ -51,9 +56,9 @@ export default function BulkCreationScreen() {
       return;
     }
 
-    const created = addBulkSet(batchName, selectedItems);
+    const created = addBulkSet(batchName, selectedItems, activeFactory.id);
     if (created) {
-      setSuccessBanner(`Bulk Set "${created.batchNumber}" created successfully!`);
+      setSuccessBanner(`Bulk Set "${created.batchNumber}" created for ${activeFactory.name}!`);
       setTimeout(() => {
         setSuccessBanner(null);
         router.push('/reports');
@@ -65,13 +70,41 @@ export default function BulkCreationScreen() {
     <SafeAreaView style={styles.safeArea}>
       <Header
         greeting="Bulk Set Creation"
-        subTitle="Select tea grades, specify quantities, and calculate bulk average price"
+        subTitle="Select factory, tea grades, and calculate factory bulk average price"
       />
 
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
+
+        {/* Factory Selection Card */}
+        <View style={styles.card}>
+          <Text style={styles.inputLabel}>Select Processing Factory:</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={styles.factoryPillsRow}>
+              {factories.map((fac) => {
+                const isSelected = fac.id === selectedFactoryId;
+                return (
+                  <Pressable
+                    key={fac.id}
+                    style={[styles.factoryPill, isSelected && styles.factoryPillActive]}
+                    onPress={() => {
+                      setSelectedFactoryId(fac.id);
+                      setBatchName(`BATCH-${fac.code}-${Date.now().toString().slice(-4)}`);
+                    }}>
+                    <Text style={[styles.factoryCode, isSelected && styles.factoryCodeActive]}>
+                      {fac.code}
+                    </Text>
+                    <Text style={[styles.factoryName, isSelected && styles.factoryNameActive]}>
+                      {fac.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </ScrollView>
+        </View>
 
         {/* Real-time Calculation Summary Card */}
         <View style={styles.summaryCard}>
@@ -80,9 +113,11 @@ export default function BulkCreationScreen() {
               <ChartIcon color={Colors.primary} size={20} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.summaryTitle}>Real-time Bulk Set Analytics</Text>
+              <Text style={styles.summaryTitle}>
+                {activeFactory.name} • Analytics
+              </Text>
               <Text style={styles.summarySubtitle}>
-                Live calculated metrics based on selected grade quantities
+                Live calculated metrics using {activeFactory.code} grade pricing
               </Text>
             </View>
           </View>
@@ -112,9 +147,9 @@ export default function BulkCreationScreen() {
               </Text>
             </View>
 
-            {/* Comparison Indicator (Green/Red Badge) */}
+            {/* Comparison Indicator */}
             <View style={styles.metricBox}>
-              <Text style={styles.metricLabel}>Market Comparison</Text>
+              <Text style={styles.metricLabel}>Market Variance</Text>
               <View style={styles.comparisonRow}>
                 <View
                   style={[
@@ -161,17 +196,19 @@ export default function BulkCreationScreen() {
               style={styles.batchNameInput}
               value={batchName}
               onChangeText={setBatchName}
-              placeholder="e.g. BATCH-2026-07C"
+              placeholder="e.g. BATCH-GV-04-07C"
               placeholderTextColor={Colors.textSecondary}
             />
           </View>
 
-          <Text style={styles.sectionHeading}>Tea Items & Quantities (kg)</Text>
+          <Text style={styles.sectionHeading}>
+            {activeFactory.code} Tea Items & Quantities (kg)
+          </Text>
 
           <View style={styles.table}>
             <View style={styles.tableHeader}>
               <Text style={[styles.th, { flex: 2 }]}>Tea Item Name</Text>
-              <Text style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>Current Price (Rs/kg)</Text>
+              <Text style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>Factory Price (Rs/kg)</Text>
               <Text style={[styles.th, { flex: 2, textAlign: 'center' }]}>Quantity (kg)</Text>
               <Text style={[styles.th, { flex: 2, textAlign: 'right' }]}>Total Value (Rs)</Text>
             </View>
@@ -217,7 +254,9 @@ export default function BulkCreationScreen() {
           <View style={styles.actionRow}>
             <Pressable style={styles.createButton} onPress={handleCreateBulkSet}>
               <PlusIcon color="#FFFFFF" size={18} />
-              <Text style={styles.createButtonText}>Create Bulk Set</Text>
+              <Text style={styles.createButtonText}>
+                Create Bulk Set for {activeFactory.code}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -239,6 +278,55 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 20,
     paddingBottom: 40,
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    gap: 16,
+  },
+  factoryPillsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingTop: 4,
+  },
+  factoryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  factoryPillActive: {
+    backgroundColor: Colors.primaryLight,
+    borderColor: Colors.primary,
+  },
+  factoryCode: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  factoryCodeActive: {
+    color: Colors.primary,
+  },
+  factoryName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  factoryNameActive: {
+    color: Colors.primary,
+    fontWeight: '700',
   },
   summaryCard: {
     backgroundColor: '#FFFFFF',
@@ -324,18 +412,6 @@ const styles = StyleSheet.create({
   diffText: {
     fontSize: 14,
     fontWeight: '700',
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    gap: 16,
   },
   formRow: {
     flexDirection: 'row',

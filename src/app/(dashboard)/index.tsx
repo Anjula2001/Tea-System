@@ -25,23 +25,31 @@ export default function DashboardScreen() {
   const globalPrice = useTeaStore((s) => s.globalPrice);
   const weeklyReports = useTeaStore((s) => s.weeklyReports);
   const bulkSets = useTeaStore((s) => s.bulkSets);
+  const factories = useTeaStore((s) => s.factories);
+  const selectedFactoryId = useTeaStore((s) => s.selectedFactoryId);
+  const setSelectedFactoryId = useTeaStore((s) => s.setSelectedFactoryId);
+  const calculateOverallFactoryAvg = useTeaStore((s) => s.calculateOverallFactoryAvg);
+
+  const activeFactory = factories.find((f) => f.id === selectedFactoryId) || factories[0];
+  const overallAvg = calculateOverallFactoryAvg();
 
   const currentReport = weeklyReports[0] || {
-    factoryBulkAvg: 1492,
-    comparisonDiff: 42,
+    factoryBulkAvg: 1488,
+    comparisonDiff: 38,
     isAbove: true,
-    totalVolumeKg: 18400,
+    totalVolumeKg: 46400,
   };
 
-  const isAbove = currentReport.isAbove;
-  const diff = Math.abs(currentReport.comparisonDiff);
-  const percentDiff = globalPrice > 0 ? ((diff / globalPrice) * 100).toFixed(1) : '0';
+  const activeDiff = activeFactory.weeklyAvgPrice - globalPrice;
+  const isActiveAbove = activeDiff >= 0;
+  const absActiveDiff = Math.abs(activeDiff);
+  const activePercentDiff = globalPrice > 0 ? ((absActiveDiff / globalPrice) * 100).toFixed(1) : '0';
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <Header
         greeting="Tea Factory Dashboard"
-        subTitle="Green Valley Plantation #4 • Week 29 Active"
+        subTitle={`Multi-Factory Network • ${activeFactory.name} • Week 29 Active`}
         notificationCount={2}
       />
 
@@ -50,9 +58,37 @@ export default function DashboardScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
         
+        {/* Factory Quick Selector Bar */}
+        <View style={styles.factorySelectorContainer}>
+          <Text style={styles.selectorLabel}>ACTIVE FACTORY VIEW:</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={styles.factoryPillRow}>
+              {factories.map((fac) => {
+                const isSelected = fac.id === selectedFactoryId;
+                return (
+                  <Pressable
+                    key={fac.id}
+                    style={[styles.factoryPill, isSelected && styles.factoryPillActive]}
+                    onPress={() => setSelectedFactoryId(fac.id)}>
+                    <Text style={[styles.factoryCode, isSelected && styles.factoryCodeActive]}>
+                      {fac.code}
+                    </Text>
+                    <Text style={[styles.factoryName, isSelected && styles.factoryNameActive]}>
+                      {fac.name}
+                    </Text>
+                    <Text style={[styles.factoryAvg, isSelected && styles.factoryAvgActive]}>
+                      Rs. {fac.weeklyAvgPrice}/kg
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </ScrollView>
+        </View>
+
         {/* KPI Metrics Cards Grid */}
         <View style={styles.metricsGrid}>
-          {/* Card 1: Weekly Global Tea Price */}
+          {/* Card 1: Weekly Global Tea Price Benchmark */}
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardLabel}>Weekly Global Price</Text>
@@ -67,31 +103,46 @@ export default function DashboardScreen() {
             <Text style={styles.subtext}>Global Tea Auction Benchmark</Text>
           </View>
 
-          {/* Card 2: Factory Bulk Average Price */}
+          {/* Card 2: Selected Factory Average Price */}
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <Text style={styles.cardLabel}>Factory Bulk Average</Text>
+              <Text style={styles.cardLabel}>{activeFactory.code} Weekly Avg</Text>
               <View style={[styles.iconBox, { backgroundColor: Colors.primaryLight }]}>
                 <LeafIcon color={Colors.primary} size={20} />
               </View>
             </View>
             <Text style={styles.metricValue}>
-              Rs. {currentReport.factoryBulkAvg.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              Rs. {activeFactory.weeklyAvgPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               <Text style={styles.unitText}> / kg</Text>
             </Text>
-            <Text style={styles.subtext}>Weighted Avg Across All Batches</Text>
+            <Text style={styles.subtext}>{activeFactory.name}</Text>
           </View>
 
-          {/* Card 3: Comparison Indicator (Above/Below Global) */}
+          {/* Card 3: Multi-Factory Overall Weighted Average */}
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <Text style={styles.cardLabel}>Global Market Variance</Text>
+              <Text style={styles.cardLabel}>All-Factories Overall Avg</Text>
+              <View style={[styles.iconBox, { backgroundColor: '#F0FDF4' }]}>
+                <ChartIcon color={Colors.primary} size={20} />
+              </View>
+            </View>
+            <Text style={styles.metricValue}>
+              Rs. {overallAvg.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              <Text style={styles.unitText}> / kg</Text>
+            </Text>
+            <Text style={styles.subtext}>Weighted avg across {factories.length} factories</Text>
+          </View>
+
+          {/* Card 4: Market Variance (Above/Below Global) */}
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardLabel}>{activeFactory.code} Market Variance</Text>
               <View
                 style={[
                   styles.iconBox,
-                  { backgroundColor: isAbove ? Colors.aboveLight : Colors.belowLight },
+                  { backgroundColor: isActiveAbove ? Colors.aboveLight : Colors.belowLight },
                 ]}>
-                <ChartIcon color={isAbove ? Colors.above : Colors.below} size={20} />
+                <ChartIcon color={isActiveAbove ? Colors.above : Colors.below} size={20} />
               </View>
             </View>
             
@@ -99,38 +150,23 @@ export default function DashboardScreen() {
               <View
                 style={[
                   styles.badge,
-                  { backgroundColor: isAbove ? Colors.aboveLight : Colors.belowLight },
+                  { backgroundColor: isActiveAbove ? Colors.aboveLight : Colors.belowLight },
                 ]}>
                 <Text
                   style={[
                     styles.badgeText,
-                    { color: isAbove ? Colors.above : Colors.below },
+                    { color: isActiveAbove ? Colors.above : Colors.below },
                   ]}>
-                  {isAbove ? '▲ ABOVE GLOBAL' : '▼ BELOW GLOBAL'}
+                  {isActiveAbove ? '▲ ABOVE GLOBAL' : '▼ BELOW GLOBAL'}
                 </Text>
               </View>
             </View>
 
             <Text style={styles.comparisonValue}>
-              {isAbove ? '+' : '-'}Rs. {diff.toFixed(2)}
-              <Text style={styles.unitText}> ({percentDiff}%)</Text>
+              {isActiveAbove ? '+' : '-'}Rs. {absActiveDiff.toFixed(2)}
+              <Text style={styles.unitText}> ({activePercentDiff}%)</Text>
             </Text>
-            <Text style={styles.subtext}>Compared to weekly global index</Text>
-          </View>
-
-          {/* Card 4: Total Volume */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardLabel}>Total Production Volume</Text>
-              <View style={[styles.iconBox, { backgroundColor: '#FFF7ED' }]}>
-                <LeafIcon color="#F97316" size={20} />
-              </View>
-            </View>
-            <Text style={styles.metricValue}>
-              {currentReport.totalVolumeKg.toLocaleString()}
-              <Text style={styles.unitText}> kg</Text>
-            </Text>
-            <Text style={styles.subtext}>{bulkSets.length} Created Bulk Batches</Text>
+            <Text style={styles.subtext}>Compared to benchmark Rs. {globalPrice}</Text>
           </View>
         </View>
 
@@ -143,8 +179,8 @@ export default function DashboardScreen() {
               <MoneyIcon color="#0284C7" size={18} />
             </View>
             <View style={styles.actionTextGroup}>
-              <Text style={styles.actionTitle}>Update Weekly Prices</Text>
-              <Text style={styles.actionDesc}>Input grade-wise per kg prices</Text>
+              <Text style={styles.actionTitle}>Update Weekly Factory Prices</Text>
+              <Text style={styles.actionDesc}>Input grade-wise per kg prices for factories</Text>
             </View>
             <ChevronRightIcon color={Colors.textSecondary} size={16} />
           </Pressable>
@@ -156,11 +192,78 @@ export default function DashboardScreen() {
               <PlusIcon color={Colors.primary} size={18} />
             </View>
             <View style={styles.actionTextGroup}>
-              <Text style={styles.actionTitle}>Create Bulk Set</Text>
-              <Text style={styles.actionDesc}>Combine grades & calculate bulk avg</Text>
+              <Text style={styles.actionTitle}>Create Factory Bulk Set</Text>
+              <Text style={styles.actionDesc}>Combine grades & calculate factory bulk avg</Text>
             </View>
             <ChevronRightIcon color={Colors.textSecondary} size={16} />
           </Pressable>
+        </View>
+
+        {/* Multi-Factory Weekly Averages Breakdown Section */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeaderRow}>
+            <View>
+              <Text style={styles.sectionTitle}>Factories Weekly Average Price Breakdown</Text>
+              <Text style={styles.sectionSubtitle}>Calculated average prices per tea factory for Week 29</Text>
+            </View>
+            <Pressable onPress={() => router.push('/price-input')}>
+              <Text style={styles.viewAllText}>Manage Prices & Factories</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.table}>
+            <View style={styles.tableHeader}>
+              <Text style={[styles.th, { flex: 1.2 }]}>Code</Text>
+              <Text style={[styles.th, { flex: 2.2 }]}>Factory Name</Text>
+              <Text style={[styles.th, { flex: 1.5 }]}>Location</Text>
+              <Text style={[styles.th, { flex: 1.6, textAlign: 'right' }]}>Weekly Avg (Rs/kg)</Text>
+              <Text style={[styles.th, { flex: 1.6, textAlign: 'right' }]}>Est. Volume (kg)</Text>
+              <Text style={[styles.th, { flex: 1.8, textAlign: 'center' }]}>vs Global</Text>
+            </View>
+
+            {factories.map((fac) => {
+              const diffVal = fac.weeklyAvgPrice - globalPrice;
+              const isAbove = diffVal >= 0;
+              const isCurrentSelected = fac.id === selectedFactoryId;
+
+              return (
+                <Pressable
+                  key={fac.id}
+                  style={[styles.tableRow, isCurrentSelected && { backgroundColor: '#F8FAFC' }]}
+                  onPress={() => setSelectedFactoryId(fac.id)}>
+                  <Text style={[styles.tdBold, { flex: 1.2, color: Colors.primary }]}>
+                    {fac.code}
+                  </Text>
+                  <View style={{ flex: 2.2 }}>
+                    <Text style={styles.tdBold}>{fac.name}</Text>
+                    {isCurrentSelected && <Text style={styles.activeTagText}>Active Selection</Text>}
+                  </View>
+                  <Text style={[styles.tdText, { flex: 1.5 }]}>{fac.location}</Text>
+                  <Text style={[styles.tdBold, { flex: 1.6, textAlign: 'right' }]}>
+                    Rs. {fac.weeklyAvgPrice.toFixed(2)}
+                  </Text>
+                  <Text style={[styles.tdText, { flex: 1.6, textAlign: 'right' }]}>
+                    {fac.totalVolumeKg.toLocaleString()}
+                  </Text>
+                  <View style={{ flex: 1.8, alignItems: 'center' }}>
+                    <View
+                      style={[
+                        styles.miniBadge,
+                        { backgroundColor: isAbove ? Colors.aboveLight : Colors.belowLight },
+                      ]}>
+                      <Text
+                        style={[
+                          styles.miniBadgeText,
+                          { color: isAbove ? Colors.above : Colors.below },
+                        ]}>
+                        {isAbove ? '▲ +' : '▼ '}Rs. {Math.abs(diffVal).toFixed(1)} / kg
+                      </Text>
+                    </View>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         {/* Price Trends Line Chart Section */}
@@ -168,7 +271,7 @@ export default function DashboardScreen() {
           <View style={styles.sectionHeaderRow}>
             <View>
               <Text style={styles.sectionTitle}>Weekly Price Trend Analysis</Text>
-              <Text style={styles.sectionSubtitle}>Factory Bulk Average vs. Global Auction Price</Text>
+              <Text style={styles.sectionSubtitle}>Multi-Factory Bulk Average vs. Global Auction Price</Text>
             </View>
             <View style={styles.chartLegend}>
               <View style={styles.legendItem}>
@@ -188,7 +291,7 @@ export default function DashboardScreen() {
         {/* Recent Bulk Batches Summary Table */}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Recent Bulk Batches</Text>
+            <Text style={styles.sectionTitle}>Recent Factory Bulk Batches</Text>
             <Pressable onPress={() => router.push('/reports')}>
               <Text style={styles.viewAllText}>View All Reports</Text>
             </Pressable>
@@ -197,6 +300,7 @@ export default function DashboardScreen() {
           <View style={styles.table}>
             <View style={styles.tableHeader}>
               <Text style={[styles.th, { flex: 1.5 }]}>Batch No.</Text>
+              <Text style={[styles.th, { flex: 1.8 }]}>Factory</Text>
               <Text style={[styles.th, { flex: 1.2 }]}>Created At</Text>
               <Text style={[styles.th, { flex: 1, textAlign: 'right' }]}>Volume (kg)</Text>
               <Text style={[styles.th, { flex: 1.2, textAlign: 'right' }]}>Bulk Avg Price</Text>
@@ -206,6 +310,7 @@ export default function DashboardScreen() {
             {bulkSets.slice(0, 4).map((set) => (
               <View key={set.id} style={styles.tableRow}>
                 <Text style={[styles.tdBold, { flex: 1.5 }]}>{set.batchNumber}</Text>
+                <Text style={[styles.tdText, { flex: 1.8 }]}>{set.factoryName || 'Green Valley'}</Text>
                 <Text style={[styles.tdText, { flex: 1.2 }]}>{set.createdAt}</Text>
                 <Text style={[styles.tdText, { flex: 1, textAlign: 'right' }]}>
                   {set.totalQuantityKg.toLocaleString()}
@@ -251,6 +356,65 @@ const styles = StyleSheet.create({
     gap: 20,
     paddingBottom: 40,
   },
+  factorySelectorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  selectorLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    letterSpacing: 0.5,
+  },
+  factoryPillRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  factoryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  factoryPillActive: {
+    backgroundColor: Colors.primaryLight,
+    borderColor: Colors.primary,
+  },
+  factoryCode: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  factoryCodeActive: {
+    color: Colors.primary,
+  },
+  factoryName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  factoryNameActive: {
+    color: Colors.primary,
+  },
+  factoryAvg: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  factoryAvgActive: {
+    color: Colors.primary,
+  },
   metricsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -258,7 +422,7 @@ const styles = StyleSheet.create({
   },
   card: {
     flex: 1,
-    minWidth: 240,
+    minWidth: 220,
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 18,
@@ -276,7 +440,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cardLabel: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: Colors.textSecondary,
     textTransform: 'uppercase',
@@ -300,7 +464,7 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   subtext: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.textSecondary,
   },
   comparisonBadgeRow: {
@@ -412,6 +576,11 @@ const styles = StyleSheet.create({
   viewAllText: {
     fontSize: 13,
     fontWeight: '600',
+    color: Colors.primary,
+  },
+  activeTagText: {
+    fontSize: 10,
+    fontWeight: '700',
     color: Colors.primary,
   },
   table: {

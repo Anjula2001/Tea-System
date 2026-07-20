@@ -16,9 +16,13 @@ import { useTeaStore, WeeklyReport } from '@/store/tea-store';
 export default function ReportsScreen() {
   const weeklyReports = useTeaStore((s) => s.weeklyReports);
   const teaGrades = useTeaStore((s) => s.teaGrades);
+  const factories = useTeaStore((s) => s.factories);
+  const selectedFactoryId = useTeaStore((s) => s.selectedFactoryId);
+  const setSelectedFactoryId = useTeaStore((s) => s.setSelectedFactoryId);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'above' | 'below'>('all');
+  const [selectedReportId, setSelectedReportId] = useState<string>('w29');
 
   const filteredReports = useMemo(() => {
     return weeklyReports.filter((report) => {
@@ -34,11 +38,13 @@ export default function ReportsScreen() {
     });
   }, [weeklyReports, searchQuery, filterStatus]);
 
+  const activeReport = weeklyReports.find((r) => r.id === selectedReportId) || weeklyReports[0];
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <Header
-        greeting="Reports & Analytics"
-        subTitle="Historical weekly performance, market comparisons, and item price breakdowns"
+        greeting="Reports & Multi-Factory Analytics"
+        subTitle="Historical weekly performance, multi-factory average prices, and grade breakdowns"
       />
 
       <ScrollView
@@ -110,16 +116,87 @@ export default function ReportsScreen() {
           </View>
         </View>
 
-        {/* Table 1: Past Weeks Data */}
+        {/* Table 1: Multi-Factory Weekly Performance Breakdown for Current/Selected Week */}
+        <View style={styles.card}>
+          <View style={styles.cardHeaderRow}>
+            <View style={[styles.iconBox, { backgroundColor: Colors.primaryLight }]}>
+              <ChartIcon color={Colors.primary} size={20} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>
+                {activeReport.weekName} • Factory Average Prices Breakdown
+              </Text>
+              <Text style={styles.cardSubtitle}>
+                Individual calculated average prices per tea factory vs global benchmark (Rs. {activeReport.globalPrice}/kg)
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.table}>
+            <View style={styles.tableHeader}>
+              <Text style={[styles.th, { flex: 1.2 }]}>Code</Text>
+              <Text style={[styles.th, { flex: 2 }]}>Factory Name</Text>
+              <Text style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>Weekly Avg Price</Text>
+              <Text style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>Volume (kg)</Text>
+              <Text style={[styles.th, { flex: 1.8, textAlign: 'center' }]}>vs. Global Benchmark</Text>
+            </View>
+
+            {factories.map((fac) => {
+              const fBreakdown = activeReport.factoryBreakdown?.find((b) => b.factoryId === fac.id);
+              const avgPrice = fBreakdown ? fBreakdown.avgPrice : fac.weeklyAvgPrice;
+              const diffVal = avgPrice - activeReport.globalPrice;
+              const isAbove = diffVal >= 0;
+
+              return (
+                <View key={fac.id} style={styles.tableRow}>
+                  <Text style={[styles.tdBold, { flex: 1.2, color: Colors.primary }]}>
+                    {fac.code}
+                  </Text>
+
+                  <View style={{ flex: 2 }}>
+                    <Text style={styles.tdBold}>{fac.name}</Text>
+                    <Text style={styles.dateSub}>{fac.location}</Text>
+                  </View>
+
+                  <Text style={[styles.tdBold, { flex: 1.5, textAlign: 'right' }]}>
+                    Rs. {avgPrice.toFixed(2)}
+                  </Text>
+
+                  <Text style={[styles.tdText, { flex: 1.5, textAlign: 'right' }]}>
+                    {fac.totalVolumeKg.toLocaleString()}
+                  </Text>
+
+                  <View style={{ flex: 1.8, alignItems: 'center' }}>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        { backgroundColor: isAbove ? Colors.aboveLight : Colors.belowLight },
+                      ]}>
+                      <Text
+                        style={[
+                          styles.statusBadgeText,
+                          { color: isAbove ? Colors.above : Colors.below },
+                        ]}>
+                        {isAbove ? '▲ +' : '▼ '}Rs. {Math.abs(diffVal).toFixed(1)} / kg
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Table 2: Past Weeks Historical Overview */}
         <View style={styles.card}>
           <View style={styles.cardHeaderRow}>
             <View style={[styles.iconBox, { backgroundColor: '#EFF6FF' }]}>
               <ChartIcon color="#2563EB" size={20} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>Past Weeks Performance Summary</Text>
+              <Text style={styles.cardTitle}>Historical Weekly Performance Summary</Text>
               <Text style={styles.cardSubtitle}>
-                Historical record of weekly global auction benchmarks & factory bulk averages
+                Historical record of weekly global auction benchmarks & combined multi-factory bulk averages
               </Text>
             </View>
           </View>
@@ -127,14 +204,17 @@ export default function ReportsScreen() {
           <View style={styles.table}>
             <View style={styles.tableHeader}>
               <Text style={[styles.th, { flex: 2 }]}>Week / Dates</Text>
-              <Text style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>Global Price</Text>
-              <Text style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>Factory Bulk Avg</Text>
-              <Text style={[styles.th, { flex: 1.2, textAlign: 'right' }]}>Volume (kg)</Text>
+              <Text style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>Global Benchmark</Text>
+              <Text style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>All-Factory Bulk Avg</Text>
+              <Text style={[styles.th, { flex: 1.2, textAlign: 'right' }]}>Total Vol (kg)</Text>
               <Text style={[styles.th, { flex: 1.8, textAlign: 'center' }]}>vs. Global Market</Text>
             </View>
 
             {filteredReports.map((rep: WeeklyReport) => (
-              <View key={rep.id} style={styles.tableRow}>
+              <Pressable
+                key={rep.id}
+                style={[styles.tableRow, rep.id === selectedReportId && { backgroundColor: '#F8FAFC' }]}
+                onPress={() => setSelectedReportId(rep.id)}>
                 <View style={{ flex: 2 }}>
                   <Text style={styles.weekTitle}>{rep.weekName}</Text>
                   <Text style={styles.dateSub}>{rep.dateRange}</Text>
@@ -167,57 +247,56 @@ export default function ReportsScreen() {
                     </Text>
                   </View>
                 </View>
-              </View>
+              </Pressable>
             ))}
           </View>
         </View>
 
-        {/* Table 2: Average Prices per Item */}
+        {/* Table 3: Factory-wise Average Prices per Tea Item */}
         <View style={styles.card}>
           <View style={styles.cardHeaderRow}>
             <View style={[styles.iconBox, { backgroundColor: Colors.primaryLight }]}>
               <LeafIcon color={Colors.primary} size={20} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>Average Prices per Tea Item</Text>
+              <Text style={styles.cardTitle}>Average Prices per Tea Item Across Factories</Text>
               <Text style={styles.cardSubtitle}>
-                Itemized pricing breakdown and 4-week historical moving average
+                Side-by-side comparison of grade prices across registered tea factories
               </Text>
             </View>
           </View>
 
           <View style={styles.table}>
             <View style={styles.tableHeader}>
-              <Text style={[styles.th, { flex: 2 }]}>Tea Item Name</Text>
-              <Text style={[styles.th, { flex: 1.5 }]}>Category</Text>
-              <Text style={[styles.th, { flex: 1.8, textAlign: 'right' }]}>Current Week (Rs/kg)</Text>
-              <Text style={[styles.th, { flex: 1.8, textAlign: 'right' }]}>4-Week Avg (Rs/kg)</Text>
+              <Text style={[styles.th, { flex: 1.8 }]}>Tea Item Name</Text>
+              <Text style={[styles.th, { flex: 1.2 }]}>Category</Text>
+              {factories.map((fac) => (
+                <Text key={fac.id} style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>
+                  {fac.code} (Rs/kg)
+                </Text>
+              ))}
             </View>
 
-            {teaGrades.map((grade) => {
-              // Estimate 4-week moving avg (slightly randomized offset for realistic stats)
-              const fourWeekAvg = Math.round(grade.currentPrice * 0.98);
-
-              return (
-                <View key={grade.id} style={styles.tableRow}>
-                  <View style={{ flex: 2 }}>
-                    <Text style={styles.gradeTitle}>{grade.name}</Text>
-                  </View>
-
-                  <View style={{ flex: 1.5 }}>
-                    <Text style={styles.categoryBadge}>{grade.category}</Text>
-                  </View>
-
-                  <Text style={[styles.tdBold, { flex: 1.8, textAlign: 'right' }]}>
-                    Rs. {grade.currentPrice.toFixed(2)}
-                  </Text>
-
-                  <Text style={[styles.tdText, { flex: 1.8, textAlign: 'right' }]}>
-                    Rs. {fourWeekAvg.toFixed(2)}
-                  </Text>
+            {teaGrades.map((grade) => (
+              <View key={grade.id} style={styles.tableRow}>
+                <View style={{ flex: 1.8 }}>
+                  <Text style={styles.gradeTitle}>{grade.name}</Text>
                 </View>
-              );
-            })}
+
+                <View style={{ flex: 1.2 }}>
+                  <Text style={styles.categoryBadge}>{grade.category}</Text>
+                </View>
+
+                {factories.map((fac) => {
+                  const price = fac.gradePrices[grade.id] !== undefined ? fac.gradePrices[grade.id] : grade.currentPrice;
+                  return (
+                    <Text key={fac.id} style={[styles.tdBold, { flex: 1.5, textAlign: 'right' }]}>
+                      Rs. {price.toFixed(2)}
+                    </Text>
+                  );
+                })}
+              </View>
+            ))}
           </View>
         </View>
 

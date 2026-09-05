@@ -107,15 +107,11 @@ export default function DashboardLayout() {
       tabBar={(props: any) => <CustomTabBar {...props} />}
       screenOptions={{
         headerShown: false,
-        tabBarStyle: isDesktop
-          ? {
-              position: 'absolute',
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: 250,
-            }
-          : undefined,
+        // The navigator lays the bar and the screens out along one axis:
+        // 'bottom' gives a column (bar under the content), 'left' gives a row
+        // (bar beside it). A sidebar needs the row, otherwise the bar and the
+        // screen area compete for the same vertical space.
+        tabBarPosition: isDesktop ? 'left' : 'bottom',
       }}>
       <Tabs.Screen name="index" options={{ title: 'Dashboard' }} />
       <Tabs.Screen name="price-input" options={{ title: 'Weekly Price Input' }} />
@@ -133,7 +129,9 @@ const styles = StyleSheet.create({
   },
   sidebarContainer: {
     width: 250,
-    height: '100%',
+    // No explicit height: as a row-flex child the sidebar already stretches to
+    // full height. Setting height:'100%' made it claim the whole column and
+    // collapsed the screen area to zero.
     borderRightWidth: 1,
     paddingVertical: 24,
     paddingHorizontal: 16,

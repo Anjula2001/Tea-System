@@ -9,6 +9,7 @@ import type {
   DateRange,
   ExternalFactory,
   ExternalFactoryResult,
+  ItemPriceHistory,
   MarketAverage,
   OurBulkResult,
   OurItemAverage,
@@ -190,7 +191,11 @@ interface TeaStoreState {
     entries: { teaItemId: string; pricePerKg: number }[],
   ) => void;
   /** Append our whole bulk set's blended price for one auction. */
-  recordOurBulkResult: (sellingPeriodId: string, pricePerKg: number) => void;
+  recordOurBulkResult: (
+    sellingPeriodId: string,
+    pricePerKg: number,
+    bulkSetId?: string | null,
+  ) => void;
   /** Append other factories' sold bulk prices for one auction. */
   recordExternalResults: (
     sellingPeriodId: string,
@@ -241,14 +246,14 @@ export const useTeaStore = create<TeaStoreState>((set, get) => ({
       ],
     })),
 
-  recordOurBulkResult: (sellingPeriodId, pricePerKg) =>
+  recordOurBulkResult: (sellingPeriodId, pricePerKg, bulkSetId = null) =>
     set((state) => ({
       ourBulkResults: [
         ...state.ourBulkResults,
         {
           id: `obr-${Date.now()}`,
           sellingPeriodId,
-          bulkSetId: null,
+          bulkSetId,
           pricePerKg,
           recordedAt: new Date().toISOString(),
         },
@@ -499,6 +504,109 @@ export function valueBulkSetItems(
         teaItemName: teaItem?.name ?? 'Unknown item',
         quantityKg: item.quantityKg,
         ourAveragePricePerKg: average?.averagePricePerKg ?? null,
+      };
+    }),
+  );
+}
+
+/**
+ * What each tea item was fetching in the weeks before one auction.
+ *
+ * Only strictly earlier auctions count. Excluding the auction being entered is
+ * the whole point: an average that already contains today's price would pull
+ * toward it and flatten the movement the screen exists to show. Corrections are
+ * resolved first, so a fixed typo never counts twice in the baseline.
+ */
+export function selectOurItemHistoryBeforePeriod(
+  state: Snapshot,
+  sellingPeriodId: string,
+): Map<string, ItemPriceHistory> {
+  const target = state.sellingPeriods.find((p) => p.id === sellingPeriodId);
+  if (!target) return new Map();
+
+  const past = state.sellingPeriods
+    .filter((p) => p.auctionDate < target.auctionDate)
+    .sort((a, b) => a.auctionDate.localeCompare(b.auctionDate));
+
+  const rank = new Map(past.map((p, index) => [p.id, index]));
+  const labels = new Map(past.map((p) => [p.id, p.label]));
+
+  const current = latestPerKey(
+    state.ourItemPrices.filter((p) => rank.has(p.sellingPeriodId)),
+    (p) => `${p.teaItemId}|${p.sellingPeriodId}`,
+  );
+
+  const byItem = new Map<string, OurItemPrice[]>();
+  for (const price of current) {
+    const bucket = byItem.get(price.teaItemId);
+    if (bucket) bucket.push(price);
+    else byItem.set(price.teaItemId, [price]);
+  }
+
+  return new Map(
+    state.teaItems.map((item) => {
+      const rows = (byItem.get(item.id) ?? []).sort(
+        (a, b) => rank.get(a.sellingPeriodId)! - rank.get(b.sellingPeriodId)!,
+      );
+      const summary = blendedAverage(rows.map((r) => r.pricePerKg));
+      const latest = rows.at(-1) ?? null;
+
+      return [
+        item.id,
+        {
+          teaItemId: item.id,
+          averagePricePerKg: summary.averagePricePerKg,
+          periodsCounted: summary.periodsCounted,
+          lastPricePerKg: latest?.pricePerKg ?? null,
+          lastPeriodLabel: latest ? labels.get(latest.sellingPeriodId) ?? null : null,
+        },
+      ];
+    }),
+  );
+}
+
+/**
+ * The bulk set that was — or is being — sold at one auction.
+ *
+ * Quantities live on the set; prices only arrive on auction day. Pairing the
+ * two is what turns a column of per-item results into one blended figure.
+ * If more than one set points at the auction, the most recently created wins.
+ */
+export function selectBulkSetForPeriod(
+  state: Snapshot,
+  sellingPeriodId: string,
+): BulkSet | null {
+  return (
+    state.bulkSets
+      .filter((b) => b.targetSellingPeriodId === sellingPeriodId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .at(-1) ?? null
+  );
+}
+
+/**
+ * Rule 4 again — Σ(qty × price) ÷ Σ(qty) — but against one auction's achieved
+ * prices rather than historical averages.
+ *
+ * Deliberately the same function the bulk set screen forecasts with, so the
+ * forecast and the result are weighted identically and the difference between
+ * them means something. Items in the set with no price entered are excluded
+ * from both value and weight, exactly as unpriced items are in a forecast.
+ */
+export function valueBulkSetAtPrices(
+  state: Snapshot,
+  items: readonly BulkSetItem[],
+  pricePerKgByTeaItem: ReadonlyMap<string, number>,
+): BulkSetValuation {
+  return valueBulkSet(
+    items.map((item) => {
+      const teaItem = state.teaItems.find((t) => t.id === item.teaItemId);
+      return {
+        teaItemId: item.teaItemId,
+        teaItemCode: teaItem?.code ?? '—',
+        teaItemName: teaItem?.name ?? 'Unknown item',
+        quantityKg: item.quantityKg,
+        ourAveragePricePerKg: pricePerKgByTeaItem.get(item.teaItemId) ?? null,
       };
     }),
   );

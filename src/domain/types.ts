@@ -98,6 +98,20 @@ export interface OurItemAverage {
   periodsCounted: number;
 }
 
+/**
+ * What one tea item did *before* a given auction.
+ *
+ * Deliberately excludes the auction being entered — an average that already
+ * contains today's price would damp the very movement it is meant to reveal.
+ */
+export interface ItemPriceHistory {
+  teaItemId: string;
+  averagePricePerKg: number | null;
+  periodsCounted: number;
+  lastPricePerKg: number | null;
+  lastPeriodLabel: string | null;
+}
+
 export interface BlendedAverage {
   averagePricePerKg: number | null;
   periodsCounted: number;

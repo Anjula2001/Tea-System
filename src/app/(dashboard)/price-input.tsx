@@ -1,104 +1,130 @@
-import React, { useState, useEffect } from 'react';
-import {
-  ScrollView,
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  Pressable,
-} from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { ScrollView, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { Colors } from '@/constants/colors';
 import Header from '@/components/header';
-import { MoneyIcon, LeafIcon, PlusIcon, ChartIcon } from '@/components/ui-icons';
-import { useTeaStore } from '@/store/tea-store';
+import VerdictBadge from '@/components/verdict-badge';
+import { LeafIcon, MoneyIcon, ChartIcon } from '@/components/ui-icons';
+import { compare, formatAuctionDate, formatRs, formatSignedRs, marketAverage } from '@/domain/averaging';
+import {
+  selectExternalResultsForPeriod,
+  selectOurBulkForPeriod,
+  selectOurPricesForPeriod,
+  useTeaStore,
+} from '@/store/tea-store';
 
-export default function PriceInputScreen() {
-  const storeGlobalPrice = useTeaStore((s) => s.globalPrice);
-  const factories = useTeaStore((s) => s.factories);
-  const selectedFactoryId = useTeaStore((s) => s.selectedFactoryId);
-  const setSelectedFactoryId = useTeaStore((s) => s.setSelectedFactoryId);
-  const addFactory = useTeaStore((s) => s.addFactory);
-  const teaGrades = useTeaStore((s) => s.teaGrades);
-  const saveWeeklyPrices = useTeaStore((s) => s.saveWeeklyPrices);
-  const calculateOverallFactoryAvg = useTeaStore((s) => s.calculateOverallFactoryAvg);
+/**
+ * Recording one auction's results.
+ *
+ * Three things get entered, and the screen is split to match, because they are
+ * genuinely different kinds of fact:
+ *
+ *   1. Our price per kg for each tea item      — the detail only we have
+ *   2. Our blended price for the whole bulk    — one number, ours
+ *   3. Each other factory's blended bulk price — one number each, theirs
+ *
+ * Other factories have no per-item fields, and never will: they don't report
+ * per grade. Re-saving a value records a correction rather than an error.
+ */
+export default function AuctionResultsScreen() {
+  const state = useTeaStore();
+  const { teaItems, externalFactories, sellingPeriods } = state;
+  const recordOurPrices = useTeaStore((s) => s.recordOurPrices);
+  const recordOurBulkResult = useTeaStore((s) => s.recordOurBulkResult);
+  const recordExternalResults = useTeaStore((s) => s.recordExternalResults);
+  const markPeriodSold = useTeaStore((s) => s.markPeriodSold);
 
-  const activeFactory = factories.find((f) => f.id === selectedFactoryId) || factories[0];
+  const orderedPeriods = useMemo(
+    () => [...sellingPeriods].sort((a, b) => b.auctionDate.localeCompare(a.auctionDate)),
+    [sellingPeriods],
+  );
 
-  const [globalPriceInput, setGlobalPriceInput] = useState<string>(storeGlobalPrice.toString());
-  
-  // Local state for grade prices of the active factory
-  const [gradePrices, setGradePrices] = useState<Record<string, string>>({});
+  const [periodId, setPeriodId] = useState(orderedPeriods[0]?.id ?? '');
+  const period = sellingPeriods.find((p) => p.id === periodId) ?? null;
 
-  // Form state for adding a new factory
-  const [showAddFactory, setShowAddFactory] = useState<boolean>(false);
-  const [newFactoryName, setNewFactoryName] = useState<string>('');
-  const [newFactoryLocation, setNewFactoryLocation] = useState<string>('');
-  const [newFactoryCode, setNewFactoryCode] = useState<string>('');
+  // Saved values for this auction seed the inputs, so the form opens showing
+  // what is already on record rather than blank boxes.
+  const savedItemPrices = selectOurPricesForPeriod(state, periodId);
+  const savedBulk = selectOurBulkForPeriod(state, periodId);
+  const savedExternal = selectExternalResultsForPeriod(state, periodId);
 
-  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+  const [itemDrafts, setItemDrafts] = useState<Record<string, string>>({});
+  const [bulkDraft, setBulkDraft] = useState('');
+  const [externalDrafts, setExternalDrafts] = useState<Record<string, string>>({});
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
 
-  // Sync grade prices state when active factory or teaGrades change
-  useEffect(() => {
-    const initialMap: Record<string, string> = {};
-    teaGrades.forEach((g) => {
-      initialMap[g.id] = g.currentPrice.toString();
-    });
-    setGradePrices(initialMap);
-  }, [selectedFactoryId, teaGrades]);
+  const itemValue = (id: string) =>
+    itemDrafts[id] ?? (savedItemPrices.get(id) !== undefined ? String(savedItemPrices.get(id)) : '');
+  const externalValue = (id: string) =>
+    externalDrafts[id] ?? (savedExternal.get(id) !== undefined ? String(savedExternal.get(id)) : '');
+  const bulkValue = bulkDraft || (savedBulk !== null ? String(savedBulk) : '');
 
-  const handlePriceChange = (gradeId: string, val: string) => {
-    setGradePrices((prev) => ({ ...prev, [gradeId]: val }));
+  const switchPeriod = (id: string) => {
+    setPeriodId(id);
+    setItemDrafts({});
+    setBulkDraft('');
+    setExternalDrafts({});
+    setSavedNotice(null);
   };
 
-  // Live calculation of selected factory's weekly average price
-  const calculatedActiveFactoryAvg = React.useMemo(() => {
-    const vals = Object.values(gradePrices)
-      .map((v) => parseFloat(v) || 0)
-      .filter((v) => v > 0);
-    if (vals.length === 0) return 0;
-    return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
-  }, [gradePrices]);
+  // Live preview of how this auction compares, using whatever is entered now.
+  const preview = useMemo(() => {
+    const ours = parsePrice(bulkValue);
+    const theirs = marketAverage(
+      externalFactories
+        .map((factory) => ({
+          externalFactoryId: factory.id,
+          pricePerKg: parsePrice(externalValue(factory.id)),
+        }))
+        .filter((r): r is { externalFactoryId: string; pricePerKg: number } => r.pricePerKg !== null),
+    );
+    return { ours, market: theirs, ...compare(ours, theirs.averagePricePerKg) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bulkValue, externalDrafts, savedExternal, externalFactories]);
 
-  const overallAvg = calculateOverallFactoryAvg();
-  const parsedGlobal = parseFloat(globalPriceInput) || 0;
-  const activeDiff = calculatedActiveFactoryAvg - parsedGlobal;
-  const isActiveAbove = activeDiff >= 0;
+  const save = () => {
+    if (!period) return;
 
-  const handleSave = () => {
-    const parsedGradePrices: Record<string, number> = {};
+    const itemEntries = teaItems
+      .map((item) => ({ teaItemId: item.id, pricePerKg: parsePrice(itemValue(item.id)) }))
+      .filter((e): e is { teaItemId: string; pricePerKg: number } => e.pricePerKg !== null)
+      .filter((e) => e.pricePerKg !== savedItemPrices.get(e.teaItemId));
 
-    Object.keys(gradePrices).forEach((id) => {
-      parsedGradePrices[id] = parseFloat(gradePrices[id]) || 0;
-    });
+    const externalEntries = externalFactories
+      .map((f) => ({ externalFactoryId: f.id, pricePerKg: parsePrice(externalValue(f.id)) }))
+      .filter((e): e is { externalFactoryId: string; pricePerKg: number } => e.pricePerKg !== null)
+      .filter((e) => e.pricePerKg !== savedExternal.get(e.externalFactoryId));
 
-    saveWeeklyPrices(parsedGlobal, parsedGradePrices, activeFactory.id);
+    const bulk = parsePrice(bulkValue);
+    const bulkChanged = bulk !== null && bulk !== savedBulk;
 
-    setSaveSuccessMessage(`Weekly prices for "${activeFactory.name}" successfully updated & calculated!`);
-    setTimeout(() => {
-      setSaveSuccessMessage(null);
-    }, 4000);
-  };
+    if (itemEntries.length > 0) recordOurPrices(period.id, itemEntries);
+    if (bulkChanged) recordOurBulkResult(period.id, bulk);
+    if (externalEntries.length > 0) recordExternalResults(period.id, externalEntries);
 
-  const handleAddFactorySubmit = () => {
-    if (!newFactoryName.trim()) {
-      alert('Please enter a factory name');
-      return;
+    const changed = itemEntries.length + externalEntries.length + (bulkChanged ? 1 : 0);
+    if (changed === 0) {
+      setSavedNotice('Nothing changed — no new entries recorded.');
+    } else {
+      if (period.status === 'upcoming') markPeriodSold(period.id);
+      setSavedNotice(`Recorded ${changed} ${changed === 1 ? 'entry' : 'entries'} for ${period.label}.`);
+      setItemDrafts({});
+      setBulkDraft('');
+      setExternalDrafts({});
     }
-    addFactory(newFactoryName, newFactoryLocation, newFactoryCode);
-    setNewFactoryName('');
-    setNewFactoryLocation('');
-    setNewFactoryCode('');
-    setShowAddFactory(false);
-    setSaveSuccessMessage('New tea factory successfully registered!');
-    setTimeout(() => setSaveSuccessMessage(null), 3000);
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <Header
-        greeting="Weekly Price Input"
-        subTitle="Manage multi-factory weekly prices & calculate average prices per factory"
+        greeting="Record Auction Results"
+        subTitle={
+          period
+            ? `${period.label} · ${formatAuctionDate(period.auctionDate)}`
+            : 'No auction selected'
+        }
+        notificationCount={0}
       />
 
       <ScrollView
@@ -106,84 +132,25 @@ export default function PriceInputScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
 
-        {/* Factory Selector Bar */}
-        <View style={styles.factorySelectorCard}>
-          <View style={styles.selectorHeader}>
-            <Text style={styles.selectorTitle}>Select Tea Factory</Text>
-            <Pressable
-              style={styles.addFactoryButton}
-              onPress={() => setShowAddFactory(!showAddFactory)}>
-              <PlusIcon color={Colors.primary} size={16} />
-              <Text style={styles.addFactoryText}>
-                {showAddFactory ? 'Cancel' : 'Add Factory'}
-              </Text>
-            </Pressable>
-          </View>
-
-          {/* Add Factory Inline Form */}
-          {showAddFactory && (
-            <View style={styles.addFactoryForm}>
-              <Text style={styles.formSectionTitle}>Register New Tea Factory</Text>
-              <View style={styles.addFactoryRow}>
-                <View style={{ flex: 2 }}>
-                  <Text style={styles.miniLabel}>Factory Name *</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={newFactoryName}
-                    onChangeText={setNewFactoryName}
-                    placeholder="e.g. Ceylon Highland Estate"
-                    placeholderTextColor={Colors.textSecondary}
-                  />
-                </View>
-                <View style={{ flex: 1.5 }}>
-                  <Text style={styles.miniLabel}>Location</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={newFactoryLocation}
-                    onChangeText={setNewFactoryLocation}
-                    placeholder="e.g. Ella"
-                    placeholderTextColor={Colors.textSecondary}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.miniLabel}>Code</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={newFactoryCode}
-                    onChangeText={setNewFactoryCode}
-                    placeholder="CH-01"
-                    placeholderTextColor={Colors.textSecondary}
-                  />
-                </View>
-                <View style={{ justifyContent: 'flex-end' }}>
-                  <Pressable style={styles.submitFactoryBtn} onPress={handleAddFactorySubmit}>
-                    <Text style={styles.submitFactoryBtnText}>Save</Text>
-                  </Pressable>
-                </View>
-              </View>
-            </View>
-          )}
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.factoryPillsScroll}>
-            <View style={styles.factoryPillsContainer}>
-              {factories.map((fac) => {
-                const isSelected = fac.id === selectedFactoryId;
+        {/* Which auction */}
+        <View style={styles.selectorCard}>
+          <Text style={styles.selectorLabel}>AUCTION</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={styles.pillRow}>
+              {orderedPeriods.map((p) => {
+                const active = p.id === periodId;
                 return (
                   <Pressable
-                    key={fac.id}
-                    style={[styles.factoryPill, isSelected && styles.factoryPillActive]}
-                    onPress={() => setSelectedFactoryId(fac.id)}>
-                    <Text style={[styles.factoryCode, isSelected && styles.factoryCodeActive]}>
-                      {fac.code}
+                    key={p.id}
+                    style={[styles.pill, active && styles.pillActive]}
+                    onPress={() => switchPeriod(p.id)}>
+                    <Text style={[styles.pillTitle, active && styles.pillTitleActive]}>
+                      {p.label}
                     </Text>
-                    <Text style={[styles.factoryPillName, isSelected && styles.factoryPillNameActive]}>
-                      {fac.name}
+                    <Text style={[styles.pillMeta, active && styles.pillMetaActive]}>
+                      {formatAuctionDate(p.auctionDate)}
                     </Text>
-                    <View style={[styles.avgTag, isSelected && styles.avgTagActive]}>
-                      <Text style={[styles.avgTagText, isSelected && styles.avgTagTextActive]}>
-                        Rs. {fac.weeklyAvgPrice}
-                      </Text>
-                    </View>
+                    {p.status === 'upcoming' && <View style={styles.upcomingDot} />}
                   </Pressable>
                 );
               })}
@@ -191,526 +158,315 @@ export default function PriceInputScreen() {
           </ScrollView>
         </View>
 
-        {/* Live Multi-Factory Calculation Summary Banner */}
-        <View style={styles.summaryGrid}>
-          <View style={styles.summaryBox}>
-            <Text style={styles.summaryBoxLabel}>Active Factory Avg</Text>
-            <Text style={styles.summaryBoxValue}>
-              Rs. {calculatedActiveFactoryAvg.toLocaleString()} <Text style={styles.unitText}>/ kg</Text>
-            </Text>
-            <Text style={styles.summaryBoxSub}>{activeFactory.name}</Text>
-          </View>
-
-          <View style={styles.summaryBox}>
-            <Text style={styles.summaryBoxLabel}>Overall All-Factory Avg</Text>
-            <Text style={styles.summaryBoxValue}>
-              Rs. {overallAvg.toLocaleString()} <Text style={styles.unitText}>/ kg</Text>
-            </Text>
-            <Text style={styles.summaryBoxSub}>Weighted across {factories.length} factories</Text>
-          </View>
-
-          <View style={styles.summaryBox}>
-            <Text style={styles.summaryBoxLabel}>Variance vs Global</Text>
-            <View style={styles.badgeRow}>
-              <View
-                style={[
-                  styles.badge,
-                  { backgroundColor: isActiveAbove ? Colors.aboveLight : Colors.belowLight },
-                ]}>
-                <Text
-                  style={[
-                    styles.badgeText,
-                    { color: isActiveAbove ? Colors.above : Colors.below },
-                  ]}>
-                  {isActiveAbove ? '▲ ABOVE' : '▼ BELOW'}
-                </Text>
-              </View>
-              <Text
-                style={[
-                  styles.diffValText,
-                  { color: isActiveAbove ? Colors.above : Colors.below },
-                ]}>
-                {isActiveAbove ? '+' : ''}Rs. {activeDiff.toFixed(1)}
-              </Text>
-            </View>
-            <Text style={styles.summaryBoxSub}>Benchmark: Rs. {parsedGlobal}</Text>
-          </View>
-        </View>
-
-        {/* Global Average Price Form */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <View style={[styles.iconBox, { backgroundColor: '#EFF6FF' }]}>
-              <MoneyIcon color="#2563EB" size={20} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>Global Auction Benchmark Price</Text>
-              <Text style={styles.cardSubtitle}>
-                Set the weekly global market benchmark price (Rs / kg)
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.formRow}>
-            <Text style={styles.inputLabel}>Global Benchmark Price (Rs/kg):</Text>
-            <View style={styles.inputWrapper}>
-              <Text style={styles.currencyPrefix}>Rs.</Text>
-              <TextInput
-                style={styles.textInput}
-                value={globalPriceInput}
-                onChangeText={setGlobalPriceInput}
-                keyboardType="numeric"
-                placeholder="0.00"
-                placeholderTextColor={Colors.textSecondary}
-              />
-            </View>
-          </View>
-        </View>
-
-        {/* Success Feedback Banner */}
-        {saveSuccessMessage && (
-          <View style={styles.successBanner}>
-            <Text style={styles.successText}>✓ {saveSuccessMessage}</Text>
+        {savedNotice && (
+          <View style={styles.notice}>
+            <Text style={styles.noticeText}>{savedNotice}</Text>
           </View>
         )}
 
-        {/* Grade Price Table for Selected Factory */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <View style={[styles.iconBox, { backgroundColor: Colors.primaryLight }]}>
-              <LeafIcon color={Colors.primary} size={20} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>
-                {activeFactory.name} • Grade Prices
-              </Text>
-              <Text style={styles.cardSubtitle}>
-                Update current market prices per kg for this factory to calculate its weekly average price properly
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.table}>
-            <View style={styles.tableHeader}>
-              <Text style={[styles.th, { flex: 2 }]}>Tea Item Name</Text>
-              <Text style={[styles.th, { flex: 1.5 }]}>Category</Text>
-              <Text style={[styles.th, { flex: 2, textAlign: 'right' }]}>Price per kg (Rs)</Text>
-            </View>
-
-            {teaGrades.map((grade) => (
-              <View key={grade.id} style={styles.tableRow}>
-                <View style={{ flex: 2 }}>
-                  <Text style={styles.gradeName}>{grade.name}</Text>
+        {/* 1 — our per-item prices */}
+        <View style={styles.sectionCard}>
+          <SectionHeading
+            icon={<LeafIcon color={Colors.primary} size={18} />}
+            tint={Colors.primaryLight}
+            title="Our Tea Item Prices"
+            subtitle="What 1 kg of each item fetched at this auction. These build our per-item averages."
+          />
+          <View style={styles.inputGrid}>
+            {teaItems.map((item) => (
+              <View key={item.id} style={styles.inputCell}>
+                <View style={styles.inputLabelRow}>
+                  <Text style={styles.inputCode}>{item.code}</Text>
+                  {savedItemPrices.has(item.id) && <Text style={styles.savedTag}>on record</Text>}
                 </View>
-                
-                <View style={{ flex: 1.5 }}>
-                  <Text style={styles.categoryTag}>{grade.category}</Text>
-                </View>
-
-                <View style={{ flex: 2, alignItems: 'flex-end' }}>
-                  <View style={styles.tableInputWrapper}>
-                    <Text style={styles.tableCurrency}>Rs.</Text>
-                    <TextInput
-                      style={styles.tableInput}
-                      value={gradePrices[grade.id] !== undefined ? gradePrices[grade.id] : grade.currentPrice.toString()}
-                      onChangeText={(val) => handlePriceChange(grade.id, val)}
-                      keyboardType="numeric"
-                      placeholder="0.00"
-                      placeholderTextColor={Colors.textSecondary}
-                    />
-                  </View>
+                <Text style={styles.inputName}>{item.name}</Text>
+                <View style={styles.inputWrap}>
+                  <Text style={styles.inputPrefix}>Rs.</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={itemValue(item.id)}
+                    onChangeText={(text) =>
+                      setItemDrafts((prev) => ({ ...prev, [item.id]: text }))
+                    }
+                    keyboardType="decimal-pad"
+                    placeholder="0.00"
+                    placeholderTextColor={Colors.textSecondary}
+                  />
+                  <Text style={styles.inputSuffix}>/kg</Text>
                 </View>
               </View>
             ))}
           </View>
+        </View>
 
-          {/* Clear Call-To-Action Save Button */}
-          <View style={styles.actionRow}>
-            <Pressable style={styles.saveButton} onPress={handleSave}>
-              <Text style={styles.saveButtonText}>
-                Save & Calculate Avg for {activeFactory.code}
-              </Text>
-            </Pressable>
+        {/* 2 — our blended bulk price */}
+        <View style={styles.sectionCard}>
+          <SectionHeading
+            icon={<ChartIcon color={Colors.primary} size={18} />}
+            tint="#F0FDF4"
+            title="Our Bulk Set Price"
+            subtitle="One blended figure for the whole bulk set we sold. This is what compares directly against other factories."
+          />
+          <View style={styles.bulkRow}>
+            <View style={styles.bulkInputWrap}>
+              <Text style={styles.inputPrefix}>Rs.</Text>
+              <TextInput
+                style={[styles.input, styles.bulkInput]}
+                value={bulkValue}
+                onChangeText={setBulkDraft}
+                keyboardType="decimal-pad"
+                placeholder="0.00"
+                placeholderTextColor={Colors.textSecondary}
+              />
+              <Text style={styles.inputSuffix}>/kg</Text>
+            </View>
+            {savedBulk !== null && (
+              <Text style={styles.bulkSaved}>Currently on record: Rs. {formatRs(savedBulk)}</Text>
+            )}
           </View>
         </View>
 
+        {/* 3 — other factories */}
+        <View style={styles.sectionCard}>
+          <SectionHeading
+            icon={<MoneyIcon color="#B8860B" size={18} />}
+            tint="#FFF8E1"
+            title="Other Factories' Bulk Prices"
+            subtitle="One blended figure per factory, read from the published auction reports. They differ because each factory sold a different mix — and none of them report per tea item."
+          />
+          <View style={styles.inputGrid}>
+            {externalFactories.map((factory) => (
+              <View key={factory.id} style={styles.inputCell}>
+                <View style={styles.inputLabelRow}>
+                  <Text style={styles.inputCode}>{factory.code}</Text>
+                  {savedExternal.has(factory.id) && <Text style={styles.savedTag}>on record</Text>}
+                </View>
+                <Text style={styles.inputName}>
+                  {factory.name}
+                  {factory.region ? ` · ${factory.region}` : ''}
+                </Text>
+                <View style={styles.inputWrap}>
+                  <Text style={styles.inputPrefix}>Rs.</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={externalValue(factory.id)}
+                    onChangeText={(text) =>
+                      setExternalDrafts((prev) => ({ ...prev, [factory.id]: text }))
+                    }
+                    keyboardType="decimal-pad"
+                    placeholder="0.00"
+                    placeholderTextColor={Colors.textSecondary}
+                  />
+                  <Text style={styles.inputSuffix}>/kg</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        {/* Live comparison for this auction */}
+        <View style={styles.previewCard}>
+          <View style={styles.previewBlock}>
+            <Text style={styles.previewLabel}>OUR BULK</Text>
+            <Text style={styles.previewValue}>Rs. {formatRs(preview.ours)}</Text>
+          </View>
+          <View style={styles.previewDivider} />
+          <View style={styles.previewBlock}>
+            <Text style={styles.previewLabel}>
+              MARKET · {preview.market.factoriesCounted} FACTORIES
+            </Text>
+            <Text style={[styles.previewValue, { color: '#B8860B' }]}>
+              Rs. {formatRs(preview.market.averagePricePerKg)}
+            </Text>
+          </View>
+          <View style={styles.previewDivider} />
+          <View style={styles.previewBlock}>
+            <Text style={styles.previewLabel}>DIFFERENCE</Text>
+            <Text
+              style={[
+                styles.previewValue,
+                {
+                  color:
+                    preview.verdict === 'below'
+                      ? Colors.below
+                      : preview.verdict === 'unknown'
+                        ? Colors.textSecondary
+                        : Colors.above,
+                },
+              ]}>
+              {formatSignedRs(preview.differencePerKg)}
+            </Text>
+            <VerdictBadge verdict={preview.verdict} percent={preview.differencePercent} compact />
+          </View>
+        </View>
+
+        <Pressable style={styles.saveButton} onPress={save}>
+          <Text style={styles.saveButtonText}>
+            Save results for {period?.label ?? 'this auction'}
+          </Text>
+        </Pressable>
+        <Text style={styles.appendNote}>
+          Saving appends to the record. Entering a value that already exists keeps the original on
+          file and treats the new one as a correction.
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+function SectionHeading({
+  icon,
+  tint,
+  title,
+  subtitle,
+}: {
+  icon: React.ReactNode;
+  tint: string;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <View style={styles.headingRow}>
+      <View style={[styles.headingIcon, { backgroundColor: tint }]}>{icon}</View>
+      <View style={styles.headingText}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Accepts only a sane positive number; anything else is "not entered". */
+function parsePrice(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.round(value * 100) / 100;
+}
+
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    gap: 20,
-    paddingBottom: 40,
-  },
-  factorySelectorCard: {
-    backgroundColor: '#FFFFFF',
+  safeArea: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1 },
+  scrollContent: { padding: 20, gap: 20, paddingBottom: 48 },
+
+  selectorCard: {
+    backgroundColor: Colors.card,
     borderRadius: 12,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: Colors.border,
-    gap: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
-    shadowRadius: 6,
+    gap: 10,
   },
-  selectorHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  selectorTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.text,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  addFactoryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: Colors.primaryLight,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-  },
-  addFactoryText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.primary,
-  },
-  addFactoryForm: {
-    backgroundColor: '#F8FAFC',
+  selectorLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.8 },
+  pillRow: { flexDirection: 'row', gap: 8 },
+  pill: {
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
     borderRadius: 8,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 10,
-  },
-  formSectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  addFactoryRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    alignItems: 'flex-end',
-  },
-  miniLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: Colors.textSecondary,
-    marginBottom: 4,
-  },
-  formInput: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 13,
-    color: Colors.text,
-  },
-  submitFactoryBtn: {
-    backgroundColor: Colors.primary,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 6,
-  },
-  submitFactoryBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  factoryPillsScroll: {
-    flexGrow: 0,
-  },
-  factoryPillsContainer: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  factoryPill: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 10,
-    paddingVertical: 10,
     paddingHorizontal: 14,
-    gap: 4,
-    minWidth: 160,
+    paddingVertical: 8,
+    minWidth: 130,
   },
-  factoryPillActive: {
-    backgroundColor: Colors.primaryLight,
-    borderColor: Colors.primary,
+  pillActive: { backgroundColor: Colors.primaryLight, borderColor: Colors.primary },
+  pillTitle: { fontSize: 13, fontWeight: '700', color: Colors.text },
+  pillTitleActive: { color: Colors.primary },
+  pillMeta: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },
+  pillMetaActive: { color: Colors.primary },
+  upcomingDot: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: Colors.accent,
   },
-  factoryCode: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: Colors.textSecondary,
-    letterSpacing: 0.5,
+
+  notice: {
+    backgroundColor: Colors.aboveLight,
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.above,
   },
-  factoryCodeActive: {
-    color: Colors.primary,
-  },
-  factoryPillName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  factoryPillNameActive: {
-    color: Colors.primary,
-    fontWeight: '700',
-  },
-  avgTag: {
-    backgroundColor: '#E2E8F0',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    alignSelf: 'flex-start',
-    marginTop: 2,
-  },
-  avgTagActive: {
-    backgroundColor: Colors.primary,
-  },
-  avgTagText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  avgTagTextActive: {
-    color: '#FFFFFF',
-  },
-  summaryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  summaryBox: {
-    flex: 1,
-    minWidth: 180,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    padding: 14,
+  noticeText: { fontSize: 13, color: Colors.above, fontWeight: '600' },
+
+  sectionCard: {
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    padding: 20,
     borderWidth: 1,
     borderColor: Colors.border,
-    gap: 4,
+    gap: 16,
   },
-  summaryBoxLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textSecondary,
-    textTransform: 'uppercase',
-  },
-  summaryBoxValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  unitText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: Colors.textSecondary,
-  },
-  summaryBoxSub: {
-    fontSize: 11,
-    color: Colors.textSecondary,
-  },
-  badgeRow: {
+  headingRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+  headingIcon: { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  headingText: { flex: 1 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
+  sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2, lineHeight: 17 },
+
+  inputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+  // flexBasis + maxWidth rather than flex:1 — otherwise a short final row
+  // stretches two cells across the whole card and the columns stop lining up.
+  inputCell: { flexGrow: 1, flexBasis: 210, minWidth: 190, maxWidth: 300, gap: 4 },
+  inputLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  inputCode: { fontSize: 13, fontWeight: '700', color: Colors.text },
+  savedTag: { fontSize: 10, fontWeight: '600', color: Colors.primary },
+  inputName: { fontSize: 11, color: Colors.textSecondary },
+  inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
     gap: 6,
     marginTop: 2,
   },
-  badge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  diffValText: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
+  // The affixes must not shrink, or a tight column clips "/kg" mid-glyph.
+  inputPrefix: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600', flexShrink: 0 },
+  inputSuffix: { fontSize: 12, color: Colors.textSecondary, flexShrink: 0 },
+  input: { flex: 1, minWidth: 0, paddingVertical: 10, fontSize: 15, fontWeight: '600', color: Colors.text },
+
+  bulkRow: { gap: 8 },
+  bulkInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
     borderWidth: 1,
-    borderColor: Colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    gap: 16,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  iconBox: {
-    width: 40,
-    height: 40,
+    borderColor: Colors.primary,
     borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: 14,
+    gap: 8,
+    maxWidth: 320,
   },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  cardSubtitle: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-  },
-  formRow: {
+  bulkInput: { fontSize: 20, paddingVertical: 12 },
+  bulkSaved: { fontSize: 12, color: Colors.textSecondary },
+
+  previewCard: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     flexWrap: 'wrap',
-    gap: 12,
-    paddingTop: 8,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: Colors.card,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    width: 220,
+    padding: 18,
+    gap: 14,
   },
-  currencyPrefix: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.textSecondary,
-    marginRight: 6,
-  },
-  textInput: {
-    flex: 1,
-    paddingVertical: 10,
-    fontSize: 15,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  successBanner: {
-    backgroundColor: Colors.aboveLight,
-    borderWidth: 1,
-    borderColor: Colors.above,
-    borderRadius: 10,
-    padding: 14,
-  },
-  successText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.above,
-  },
-  table: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-  },
-  tableHeader: {
-    flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  th: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textSecondary,
-    textTransform: 'uppercase',
-  },
-  tableRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  gradeName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  categoryTag: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    alignSelf: 'flex-start',
-  },
-  tableInputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    width: 130,
-  },
-  tableCurrency: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    marginRight: 4,
-  },
-  tableInput: {
-    flex: 1,
-    paddingVertical: 6,
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text,
-    textAlign: 'right',
-  },
-  actionRow: {
-    alignItems: 'flex-end',
-    paddingTop: 8,
-  },
+  previewBlock: { flex: 1, minWidth: 150, gap: 4 },
+  previewDivider: { width: 1, backgroundColor: Colors.border },
+  previewLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.6 },
+  previewValue: { fontSize: 20, fontWeight: '700', color: Colors.text },
+
   saveButton: {
     backgroundColor: Colors.primary,
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-    borderRadius: 8,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    borderRadius: 10,
+    paddingVertical: 15,
+    alignItems: 'center',
   },
-  saveButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
+  saveButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  appendNote: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center', lineHeight: 16 },
 });

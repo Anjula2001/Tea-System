@@ -1,76 +1,103 @@
-import React, { useState, useMemo } from 'react';
-import {
-  ScrollView,
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  Pressable,
-} from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { ScrollView, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+
 import { Colors } from '@/constants/colors';
 import Header from '@/components/header';
-import { LeafIcon, PlusIcon, ChartIcon } from '@/components/ui-icons';
-import { useTeaStore } from '@/store/tea-store';
+import VerdictBadge from '@/components/verdict-badge';
+import { PlusIcon, LeafIcon } from '@/components/ui-icons';
+import {
+  compare,
+  formatAuctionDate,
+  formatKg,
+  formatPercent,
+  formatRs,
+  formatSignedRs,
+} from '@/domain/averaging';
+import type { BulkSetItem } from '@/domain/types';
+import {
+  selectMarketAverage,
+  selectOurItemAverages,
+  selectUpcomingPeriod,
+  useTeaStore,
+  valueBulkSetItems,
+} from '@/store/tea-store';
 
-export default function BulkCreationScreen() {
-  const router = useRouter();
-  const factories = useTeaStore((s) => s.factories);
-  const selectedFactoryId = useTeaStore((s) => s.selectedFactoryId);
-  const setSelectedFactoryId = useTeaStore((s) => s.setSelectedFactoryId);
-  const teaGrades = useTeaStore((s) => s.teaGrades);
-  const globalPrice = useTeaStore((s) => s.globalPrice);
-  const calculateBulkMetrics = useTeaStore((s) => s.calculateBulkMetrics);
-  const addBulkSet = useTeaStore((s) => s.addBulkSet);
+/**
+ * Preparing the next bulk set.
+ *
+ * Type quantities, and the expected value updates live: each item priced at our
+ * own historical average, weighted by its share of the kilos, then compared
+ * against the one market figure we have.
+ *
+ * The per-item rows deliberately carry no market column. Other factories report
+ * a single blended number, so a market price for BOP does not exist to show.
+ */
+export default function BulkSetScreen() {
+  const state = useTeaStore();
+  const { teaItems, bulkSets, sellingPeriods, range } = state;
+  const saveBulkSet = useTeaStore((s) => s.saveBulkSet);
 
-  const activeFactory = factories.find((f) => f.id === selectedFactoryId) || factories[0];
+  const upcoming = selectUpcomingPeriod(state);
+  const editable = bulkSets.filter((b) => b.status !== 'sold');
 
-  const [batchName, setBatchName] = useState<string>(`BATCH-${activeFactory.code}-${Date.now().toString().slice(-4)}`);
-  const [quantities, setQuantities] = useState<Record<string, string>>({
-    'op1-34': '4000',
-    'pekoe-36': '3000',
-    'bopf': '2500',
-  });
+  const [selectedId, setSelectedId] = useState<string | null>(editable[0]?.id ?? null);
+  const selected = bulkSets.find((b) => b.id === selectedId) ?? null;
 
-  const [successBanner, setSuccessBanner] = useState<string | null>(null);
+  const [reference, setReference] = useState(selected?.reference ?? nextReference(bulkSets));
+  const [quantities, setQuantities] = useState<Record<string, string>>(() =>
+    seedQuantities(selected?.items ?? []),
+  );
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const handleQtyChange = (gradeId: string, val: string) => {
-    setQuantities((prev) => ({ ...prev, [gradeId]: val }));
+  const switchSet = (id: string | null) => {
+    const target = id ? bulkSets.find((b) => b.id === id) ?? null : null;
+    setSelectedId(id);
+    setReference(target?.reference ?? nextReference(bulkSets));
+    setQuantities(seedQuantities(target?.items ?? []));
+    setNotice(null);
   };
 
-  const selectedItems = useMemo(() => {
-    return Object.entries(quantities).map(([gradeId, qtyStr]) => ({
-      gradeId,
-      quantityKg: parseFloat(qtyStr) || 0,
-    }));
-  }, [quantities]);
+  const draftItems: BulkSetItem[] = useMemo(
+    () =>
+      teaItems
+        .map((item) => ({ teaItemId: item.id, quantityKg: parseQuantity(quantities[item.id] ?? '') }))
+        .filter((item): item is BulkSetItem => item.quantityKg !== null && item.quantityKg > 0)
+        .map((item) => ({ teaItemId: item.teaItemId, quantityKg: item.quantityKg })),
+    [teaItems, quantities],
+  );
 
-  const metrics = useMemo(() => {
-    return calculateBulkMetrics(selectedItems, activeFactory.id);
-  }, [selectedItems, activeFactory.id, calculateBulkMetrics]);
+  const valuation = valueBulkSetItems(state, draftItems, range);
+  const market = selectMarketAverage(state, range);
+  const averages = selectOurItemAverages(state, range);
+  const averageByItem = new Map(averages.map((a) => [a.teaItemId, a]));
+  const verdict = compare(valuation.expectedPricePerKg, market.averagePricePerKg);
 
-  const handleCreateBulkSet = () => {
-    if (metrics.totalQuantityKg === 0) {
-      alert('Please enter a quantity for at least one tea grade.');
+  const save = () => {
+    if (draftItems.length === 0) {
+      setNotice('Add a quantity for at least one tea item before saving.');
       return;
     }
-
-    const created = addBulkSet(batchName, selectedItems, activeFactory.id);
-    if (created) {
-      setSuccessBanner(`Bulk Set "${created.batchNumber}" created for ${activeFactory.name}!`);
-      setTimeout(() => {
-        setSuccessBanner(null);
-        router.push('/reports');
-      }, 1500);
-    }
+    const saved = saveBulkSet({
+      id: selectedId ?? undefined,
+      reference,
+      targetSellingPeriodId: selected?.targetSellingPeriodId ?? upcoming?.id ?? null,
+      items: draftItems,
+    });
+    setSelectedId(saved.id);
+    setNotice(`Saved ${saved.reference} — ${formatKg(valuation.totalQuantityKg)} kg.`);
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <Header
-        greeting="Bulk Set Creation"
-        subTitle="Select factory, tea grades, and calculate factory bulk average price"
+        greeting="Prepare Bulk Set"
+        subTitle={
+          upcoming
+            ? `For ${upcoming.label} · ${formatAuctionDate(upcoming.auctionDate)}`
+            : 'No upcoming auction scheduled'
+        }
+        notificationCount={0}
       />
 
       <ScrollView
@@ -78,471 +105,390 @@ export default function BulkCreationScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
 
-        {/* Factory Selection Card */}
-        <View style={styles.card}>
-          <Text style={styles.inputLabel}>Select Processing Factory:</Text>
+        <View style={styles.selectorCard}>
+          <Text style={styles.selectorLabel}>BULK SET</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.factoryPillsRow}>
-              {factories.map((fac) => {
-                const isSelected = fac.id === selectedFactoryId;
+            <View style={styles.pillRow}>
+              {editable.map((set) => {
+                const active = set.id === selectedId;
                 return (
                   <Pressable
-                    key={fac.id}
-                    style={[styles.factoryPill, isSelected && styles.factoryPillActive]}
-                    onPress={() => {
-                      setSelectedFactoryId(fac.id);
-                      setBatchName(`BATCH-${fac.code}-${Date.now().toString().slice(-4)}`);
-                    }}>
-                    <Text style={[styles.factoryCode, isSelected && styles.factoryCodeActive]}>
-                      {fac.code}
+                    key={set.id}
+                    style={[styles.pill, active && styles.pillActive]}
+                    onPress={() => switchSet(set.id)}>
+                    <Text style={[styles.pillTitle, active && styles.pillTitleActive]}>
+                      {set.reference}
                     </Text>
-                    <Text style={[styles.factoryName, isSelected && styles.factoryNameActive]}>
-                      {fac.name}
+                    <Text style={[styles.pillMeta, active && styles.pillMetaActive]}>
+                      {set.items.length} items · {set.status}
                     </Text>
                   </Pressable>
                 );
               })}
+              <Pressable style={styles.pillNew} onPress={() => switchSet(null)}>
+                <PlusIcon color={Colors.primary} size={14} />
+                <Text style={styles.pillNewText}>New set</Text>
+              </Pressable>
             </View>
           </ScrollView>
         </View>
 
-        {/* Real-time Calculation Summary Card */}
-        <View style={styles.summaryCard}>
-          <View style={styles.cardHeaderRow}>
-            <View style={[styles.iconBox, { backgroundColor: Colors.primaryLight }]}>
-              <ChartIcon color={Colors.primary} size={20} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.summaryTitle}>
-                {activeFactory.name} • Analytics
-              </Text>
-              <Text style={styles.summarySubtitle}>
-                Live calculated metrics using {activeFactory.code} grade pricing
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.metricsGrid}>
-            <View style={styles.metricBox}>
-              <Text style={styles.metricLabel}>Total Quantity</Text>
-              <Text style={styles.metricValue}>
-                {metrics.totalQuantityKg.toLocaleString()}
-                <Text style={styles.metricUnit}> kg</Text>
-              </Text>
-            </View>
-
-            <View style={styles.metricBox}>
-              <Text style={styles.metricLabel}>Calculated Bulk Avg Price</Text>
-              <Text style={styles.metricValue}>
-                Rs. {metrics.bulkAvgPrice.toFixed(2)}
-                <Text style={styles.metricUnit}> / kg</Text>
-              </Text>
-            </View>
-
-            <View style={styles.metricBox}>
-              <Text style={styles.metricLabel}>Global Benchmark Price</Text>
-              <Text style={styles.metricValue}>
-                Rs. {globalPrice.toFixed(2)}
-                <Text style={styles.metricUnit}> / kg</Text>
-              </Text>
-            </View>
-
-            {/* Comparison Indicator */}
-            <View style={styles.metricBox}>
-              <Text style={styles.metricLabel}>Market Variance</Text>
-              <View style={styles.comparisonRow}>
-                <View
-                  style={[
-                    styles.indicatorBadge,
-                    {
-                      backgroundColor: metrics.isAboveGlobal
-                        ? Colors.aboveLight
-                        : Colors.belowLight,
-                    },
-                  ]}>
-                  <Text
-                    style={[
-                      styles.indicatorBadgeText,
-                      { color: metrics.isAboveGlobal ? Colors.above : Colors.below },
-                    ]}>
-                    {metrics.isAboveGlobal ? '▲ ABOVE GLOBAL' : '▼ BELOW GLOBAL'}
-                  </Text>
-                </View>
-
-                <Text
-                  style={[
-                    styles.diffText,
-                    { color: metrics.isAboveGlobal ? Colors.above : Colors.below },
-                  ]}>
-                  {metrics.isAboveGlobal ? '+' : ''}Rs. {metrics.comparisonDiff.toFixed(2)} / kg
-                </Text>
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* Success Banner */}
-        {successBanner && (
-          <View style={styles.successBanner}>
-            <Text style={styles.successText}>✓ {successBanner}</Text>
+        {notice && (
+          <View style={styles.notice}>
+            <Text style={styles.noticeText}>{notice}</Text>
           </View>
         )}
 
-        {/* Batch Meta & Grade Selection Card */}
-        <View style={styles.card}>
-          <View style={styles.formRow}>
-            <Text style={styles.inputLabel}>Batch Identification Name:</Text>
+        {/* Headline valuation */}
+        <View style={styles.summaryCard}>
+          <View style={styles.summaryBlock}>
+            <Text style={styles.summaryLabel}>TOTAL QUANTITY</Text>
+            <Text style={styles.summaryValue}>{formatKg(valuation.totalQuantityKg)} kg</Text>
+            <Text style={styles.summaryMeta}>
+              {draftItems.length} tea item{draftItems.length === 1 ? '' : 's'}
+            </Text>
+          </View>
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryBlock}>
+            <Text style={styles.summaryLabel}>OUR EXPECTED VALUE</Text>
+            <Text style={styles.summaryValue}>
+              Rs. {formatRs(valuation.expectedPricePerKg)}
+            </Text>
+            <Text style={styles.summaryMeta}>per kg, quantity-weighted</Text>
+          </View>
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryBlock}>
+            <Text style={styles.summaryLabel}>MARKET AVERAGE</Text>
+            <Text style={[styles.summaryValue, { color: '#B8860B' }]}>
+              Rs. {formatRs(market.averagePricePerKg)}
+            </Text>
+            <Text style={styles.summaryMeta}>{market.factoriesCounted} other factories</Text>
+          </View>
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryBlock}>
+            <Text style={styles.summaryLabel}>DIFFERENCE</Text>
+            <Text
+              style={[
+                styles.summaryValue,
+                {
+                  color:
+                    verdict.verdict === 'below'
+                      ? Colors.below
+                      : verdict.verdict === 'unknown'
+                        ? Colors.textSecondary
+                        : Colors.above,
+                },
+              ]}>
+              {formatSignedRs(verdict.differencePerKg)}
+            </Text>
+            <VerdictBadge verdict={verdict.verdict} percent={verdict.differencePercent} compact />
+          </View>
+        </View>
+
+        {valuation.unpricedTeaItemCodes.length > 0 && (
+          <View style={styles.warningRow}>
+            <Text style={styles.warningText}>
+              {valuation.unpricedTeaItemCodes.join(', ')} ha
+              {valuation.unpricedTeaItemCodes.length === 1 ? 's' : 've'} no price history in the
+              selected range, so {formatKg(valuation.totalQuantityKg - valuation.pricedQuantityKg)} kg
+              is excluded from the expected value. Coverage:{' '}
+              {formatPercent(valuation.coverage)}.
+            </Text>
+          </View>
+        )}
+
+        {/* Quantity entry + live line valuation */}
+        <View style={styles.sectionCard}>
+          <View style={styles.headingRow}>
+            <View style={[styles.headingIcon, { backgroundColor: Colors.primaryLight }]}>
+              <LeafIcon color={Colors.primary} size={18} />
+            </View>
+            <View style={styles.headingText}>
+              <Text style={styles.sectionTitle}>Set Reference &amp; Quantities</Text>
+              <Text style={styles.sectionSubtitle}>
+                Each item is valued at our own historical average. There is no market price per
+                item — other factories only report one blended figure.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.refRow}>
+            <Text style={styles.refLabel}>Reference</Text>
             <TextInput
-              style={styles.batchNameInput}
-              value={batchName}
-              onChangeText={setBatchName}
-              placeholder="e.g. BATCH-GV-04-07C"
+              style={styles.refInput}
+              value={reference}
+              onChangeText={setReference}
+              placeholder="BS-103"
               placeholderTextColor={Colors.textSecondary}
             />
           </View>
 
-          <Text style={styles.sectionHeading}>
-            {activeFactory.code} Tea Items & Quantities (kg)
-          </Text>
-
           <View style={styles.table}>
             <View style={styles.tableHeader}>
-              <Text style={[styles.th, { flex: 2 }]}>Tea Item Name</Text>
-              <Text style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>Factory Price (Rs/kg)</Text>
-              <Text style={[styles.th, { flex: 2, textAlign: 'center' }]}>Quantity (kg)</Text>
-              <Text style={[styles.th, { flex: 2, textAlign: 'right' }]}>Total Value (Rs)</Text>
+              <Text style={[styles.th, styles.colItem]}>Tea Item</Text>
+              <Text style={[styles.th, styles.colQty]}>Quantity (kg)</Text>
+              <Text style={[styles.th, styles.colNum]}>Our Avg (Rs/kg)</Text>
+              <Text style={[styles.th, styles.colNum]}>Line Value</Text>
+              <Text style={[styles.th, styles.colNum]}>Share</Text>
             </View>
 
-            {teaGrades.map((grade) => {
-              const qtyVal = parseFloat(quantities[grade.id] || '0') || 0;
-              const totalGradeValue = qtyVal * grade.currentPrice;
+            {teaItems.map((item) => {
+              const average = averageByItem.get(item.id);
+              const line = valuation.lines.find((l) => l.teaItemId === item.id);
+              const hasPrice = average?.averagePricePerKg !== null && average !== undefined;
 
               return (
-                <View key={grade.id} style={styles.tableRow}>
-                  <View style={{ flex: 2 }}>
-                    <Text style={styles.gradeName}>{grade.name}</Text>
-                    <Text style={styles.gradeCategory}>{grade.category}</Text>
+                <View key={item.id} style={styles.tableRow}>
+                  <View style={styles.colItem}>
+                    <Text style={styles.tdBold}>{item.code}</Text>
+                    <Text style={styles.tdMuted}>{item.name}</Text>
                   </View>
 
-                  <Text style={[styles.tdText, { flex: 1.5, textAlign: 'right' }]}>
-                    Rs. {grade.currentPrice.toFixed(2)}
+                  <View style={styles.colQty}>
+                    <TextInput
+                      style={styles.qtyInput}
+                      value={quantities[item.id] ?? ''}
+                      onChangeText={(text) =>
+                        setQuantities((prev) => ({ ...prev, [item.id]: text }))
+                      }
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={Colors.textSecondary}
+                    />
+                  </View>
+
+                  <Text
+                    style={[
+                      styles.tdBold,
+                      styles.colNum,
+                      !hasPrice && { color: Colors.textSecondary, fontWeight: '400' },
+                    ]}>
+                    {hasPrice ? formatRs(average!.averagePricePerKg) : 'no history'}
                   </Text>
-
-                  <View style={{ flex: 2, alignItems: 'center' }}>
-                    <View style={styles.qtyInputWrapper}>
-                      <TextInput
-                        style={styles.qtyInput}
-                        value={quantities[grade.id] || ''}
-                        onChangeText={(val) => handleQtyChange(grade.id, val)}
-                        keyboardType="numeric"
-                        placeholder="0"
-                        placeholderTextColor={Colors.textSecondary}
-                      />
-                      <Text style={styles.unitSuffix}>kg</Text>
-                    </View>
-                  </View>
-
-                  <Text style={[styles.tdBold, { flex: 2, textAlign: 'right' }]}>
-                    {totalGradeValue > 0 ? `Rs. ${totalGradeValue.toLocaleString()}` : '-'}
+                  <Text style={[styles.tdText, styles.colNum]}>
+                    {line?.lineValue == null ? '—' : formatRs(line.lineValue, 0)}
+                  </Text>
+                  <Text style={[styles.tdText, styles.colNum]}>
+                    {line?.shareOfValue == null ? '—' : formatPercent(line.shareOfValue)}
                   </Text>
                 </View>
               );
             })}
           </View>
-
-          {/* CTA Create Bulk Set Button */}
-          <View style={styles.actionRow}>
-            <Pressable style={styles.createButton} onPress={handleCreateBulkSet}>
-              <PlusIcon color="#FFFFFF" size={18} />
-              <Text style={styles.createButtonText}>
-                Create Bulk Set for {activeFactory.code}
-              </Text>
-            </Pressable>
-          </View>
         </View>
 
+        <Pressable style={styles.saveButton} onPress={save}>
+          <Text style={styles.saveButtonText}>Save {reference || 'bulk set'}</Text>
+        </Pressable>
+        <Text style={styles.footNote}>
+          This is decision support. The system never sets a selling price — it shows what the set is
+          expected to be worth so you can judge it against the market.
+        </Text>
+
+        {/* Sold sets, for reference */}
+        {bulkSets.some((b) => b.status === 'sold') && (
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Sold Bulk Sets</Text>
+            <View style={styles.table}>
+              <View style={styles.tableHeader}>
+                <Text style={[styles.th, styles.colItem]}>Reference</Text>
+                <Text style={[styles.th, styles.colNum]}>Items</Text>
+                <Text style={[styles.th, styles.colNum]}>Total kg</Text>
+                <Text style={[styles.th, styles.colItem]}>Auction</Text>
+              </View>
+              {bulkSets
+                .filter((b) => b.status === 'sold')
+                .map((set) => {
+                  const period = sellingPeriods.find((p) => p.id === set.targetSellingPeriodId);
+                  const total = set.items.reduce((sum, i) => sum + i.quantityKg, 0);
+                  return (
+                    <View key={set.id} style={styles.tableRow}>
+                      <Text style={[styles.tdBold, styles.colItem]}>{set.reference}</Text>
+                      <Text style={[styles.tdText, styles.colNum]}>{set.items.length}</Text>
+                      <Text style={[styles.tdText, styles.colNum]}>{formatKg(total)}</Text>
+                      <Text style={[styles.tdText, styles.colItem]}>
+                        {period ? period.label : '—'}
+                      </Text>
+                    </View>
+                  );
+                })}
+            </View>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+function seedQuantities(items: readonly BulkSetItem[]): Record<string, string> {
+  return Object.fromEntries(items.map((item) => [item.teaItemId, String(item.quantityKg)]));
+}
+
+function nextReference(existing: readonly { reference: string }[]): string {
+  const numbers = existing
+    .map((set) => Number(set.reference.replace(/\D/g, '')))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const next = numbers.length > 0 ? Math.max(...numbers) + 1 : 103;
+  return `BS-${next}`;
+}
+
+function parseQuantity(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.round(value * 100) / 100;
+}
+
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    gap: 20,
-    paddingBottom: 40,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
+  safeArea: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1 },
+  scrollContent: { padding: 20, gap: 20, paddingBottom: 48 },
+
+  selectorCard: {
+    backgroundColor: Colors.card,
     borderRadius: 12,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    gap: 16,
-  },
-  factoryPillsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingTop: 4,
-  },
-  factoryPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  factoryPillActive: {
-    backgroundColor: Colors.primaryLight,
-    borderColor: Colors.primary,
-  },
-  factoryCode: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textSecondary,
-  },
-  factoryCodeActive: {
-    color: Colors.primary,
-  },
-  factoryName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  factoryNameActive: {
-    color: Colors.primary,
-    fontWeight: '700',
-  },
-  summaryCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    gap: 16,
-  },
-  summaryTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  summarySubtitle: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  iconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    paddingTop: 4,
-  },
-  metricBox: {
-    flex: 1,
-    minWidth: 160,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
     padding: 14,
     borderWidth: 1,
     borderColor: Colors.border,
-    gap: 4,
+    gap: 10,
   },
-  metricLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textSecondary,
-  },
-  metricValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  metricUnit: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: Colors.textSecondary,
-  },
-  comparisonRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-    marginTop: 4,
-  },
-  indicatorBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  indicatorBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-  },
-  diffText: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  formRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flexWrap: 'wrap',
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  batchNameInput: {
-    backgroundColor: '#F8FAFC',
+  selectorLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.8 },
+  pillRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  pill: {
+    backgroundColor: Colors.background,
     borderWidth: 1,
     borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minWidth: 120,
+  },
+  pillActive: { backgroundColor: Colors.primaryLight, borderColor: Colors.primary },
+  pillTitle: { fontSize: 13, fontWeight: '700', color: Colors.text },
+  pillTitleActive: { color: Colors.primary },
+  pillMeta: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },
+  pillMetaActive: { color: Colors.primary },
+  pillNew: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: Colors.primary,
+  },
+  pillNewText: { fontSize: 13, fontWeight: '600', color: Colors.primary },
+
+  notice: {
+    backgroundColor: Colors.aboveLight,
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.above,
+  },
+  noticeText: { fontSize: 13, color: Colors.above, fontWeight: '600' },
+
+  summaryCard: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 18,
+    gap: 14,
+  },
+  summaryBlock: { flex: 1, minWidth: 150, gap: 3 },
+  summaryDivider: { width: 1, backgroundColor: Colors.border },
+  summaryLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.6 },
+  summaryValue: { fontSize: 20, fontWeight: '700', color: Colors.text },
+  summaryMeta: { fontSize: 11, color: Colors.textSecondary },
+
+  warningRow: {
+    backgroundColor: Colors.accentLight,
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#F0D48A',
+  },
+  warningText: { fontSize: 12, color: '#8A6D1F', lineHeight: 18 },
+
+  sectionCard: {
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 16,
+  },
+  headingRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+  headingIcon: { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  headingText: { flex: 1 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
+  sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2, lineHeight: 17 },
+
+  refRow: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
+  refLabel: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
+  refInput: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.background,
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 9,
     fontSize: 14,
     fontWeight: '600',
     color: Colors.text,
-    width: 220,
+    minWidth: 160,
   },
-  sectionHeading: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.text,
-    marginTop: 8,
-  },
-  table: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-  },
+
+  table: { borderRadius: 8, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
   tableHeader: {
     flexDirection: 'row',
     backgroundColor: '#F8FAFC',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+    gap: 8,
   },
-  th: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textSecondary,
-    textTransform: 'uppercase',
-  },
+  th: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, textTransform: 'uppercase' },
   tableRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
+    gap: 8,
   },
-  gradeName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  gradeCategory: {
-    fontSize: 11,
-    color: Colors.textSecondary,
-  },
-  tdText: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-  },
-  tdBold: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  qtyInputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+  colItem: { flex: 2.2 },
+  colQty: { flex: 1.4 },
+  colNum: { flex: 1.3, textAlign: 'right' },
+  tdBold: { fontSize: 13, fontWeight: '600', color: Colors.text },
+  tdText: { fontSize: 13, color: Colors.textSecondary },
+  tdMuted: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },
+  qtyInput: {
     borderWidth: 1,
     borderColor: Colors.border,
+    backgroundColor: Colors.background,
     borderRadius: 6,
-    paddingHorizontal: 8,
-    width: 100,
-  },
-  qtyInput: {
-    flex: 1,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     fontSize: 14,
     fontWeight: '600',
     color: Colors.text,
-    textAlign: 'right',
   },
-  unitSuffix: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    marginLeft: 4,
-  },
-  actionRow: {
-    alignItems: 'flex-end',
-    paddingTop: 8,
-  },
-  createButton: {
+
+  saveButton: {
     backgroundColor: Colors.primary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-    borderRadius: 8,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  },
-  createButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  successBanner: {
-    backgroundColor: Colors.aboveLight,
-    borderWidth: 1,
-    borderColor: Colors.above,
     borderRadius: 10,
-    padding: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
   },
-  successText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.above,
-  },
+  saveButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  footNote: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center', lineHeight: 16 },
 });

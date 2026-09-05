@@ -3,6 +3,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable, useWindowDimensions, Platform } from 'react-native';
 import { Colors } from '@/constants/colors';
 import { HomeIcon, MoneyIcon, PlusIcon, ChartIcon, LeafIcon } from '@/components/ui-icons';
+import { selectUpcomingPeriod, useTeaStore } from '@/store/tea-store';
 
 interface CustomTabBarProps {
   state: {
@@ -18,12 +19,13 @@ interface CustomTabBarProps {
 function CustomTabBar({ state, navigation }: CustomTabBarProps) {
   const { width } = useWindowDimensions();
   const isDesktop = Platform.OS === 'web' && width >= 768;
+  const upcoming = useTeaStore(selectUpcomingPeriod);
 
   const tabRoutes = [
     { name: 'index', label: 'Dashboard', icon: HomeIcon },
-    { name: 'price-input', label: 'Weekly Price Input', icon: MoneyIcon },
-    { name: 'bulk-creation', label: 'Bulk Creation', icon: PlusIcon },
-    { name: 'reports', label: 'Reports', icon: ChartIcon },
+    { name: 'price-input', label: 'Auction Results', icon: MoneyIcon },
+    { name: 'bulk-creation', label: 'Bulk Sets', icon: PlusIcon },
+    { name: 'reports', label: 'History', icon: ChartIcon },
   ];
 
   return (
@@ -36,7 +38,7 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
           </View>
           <View>
             <Text style={styles.brandTitle}>Green Valley</Text>
-            <Text style={styles.brandSubtitle}>Tea Factory ERP</Text>
+            <Text style={styles.brandSubtitle}>Tea Factory</Text>
           </View>
         </View>
       )}
@@ -87,9 +89,11 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
         <View style={styles.sidebarFooter}>
           <View style={styles.factoryCard}>
             <View style={styles.statusDot} />
-            <View>
-              <Text style={styles.factoryName}>Plantation No. 4</Text>
-              <Text style={styles.factoryMeta}>Week 29 Active</Text>
+            <View style={styles.factoryTextGroup}>
+              <Text style={styles.factoryName}>Nuwara Eliya</Text>
+              <Text style={styles.factoryMeta} numberOfLines={1}>
+                {upcoming ? `Next: ${upcoming.label}` : 'No auction scheduled'}
+              </Text>
             </View>
           </View>
         </View>
@@ -114,9 +118,9 @@ export default function DashboardLayout() {
         tabBarPosition: isDesktop ? 'left' : 'bottom',
       }}>
       <Tabs.Screen name="index" options={{ title: 'Dashboard' }} />
-      <Tabs.Screen name="price-input" options={{ title: 'Weekly Price Input' }} />
-      <Tabs.Screen name="bulk-creation" options={{ title: 'Bulk Creation' }} />
-      <Tabs.Screen name="reports" options={{ title: 'Reports' }} />
+      <Tabs.Screen name="price-input" options={{ title: 'Auction Results' }} />
+      <Tabs.Screen name="bulk-creation" options={{ title: 'Bulk Sets' }} />
+      <Tabs.Screen name="reports" options={{ title: 'History' }} />
     </Tabs>
   );
 }
@@ -245,5 +249,8 @@ const styles = StyleSheet.create({
   factoryMeta: {
     fontSize: 11,
     color: Colors.textSecondary,
+  },
+  factoryTextGroup: {
+    flex: 1,
   },
 });

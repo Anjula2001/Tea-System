@@ -150,11 +150,17 @@ export default function BulkSetScreen() {
           </View>
           <View style={styles.summaryDivider} />
           <View style={styles.summaryBlock}>
-            <Text style={styles.summaryLabel}>OUR EXPECTED VALUE</Text>
+            <Text style={styles.summaryLabel}>EXPECTED AVG PER KG</Text>
             <Text style={styles.summaryValue}>
               Rs. {formatRs(valuation.expectedPricePerKg)}
             </Text>
-            <Text style={styles.summaryMeta}>per kg, quantity-weighted</Text>
+            {/* The working, not just the answer — it moves with every keystroke,
+                so showing the division makes clear what the number is made of. */}
+            <Text style={styles.summaryMeta}>
+              {valuation.totalValue === null
+                ? 'Enter quantities to value the set'
+                : `Rs. ${formatRs(valuation.totalValue, 0)} ÷ ${formatKg(valuation.pricedQuantityKg)} kg`}
+            </Text>
           </View>
           <View style={styles.summaryDivider} />
           <View style={styles.summaryBlock}>
@@ -237,8 +243,12 @@ export default function BulkSetScreen() {
               const line = valuation.lines.find((l) => l.teaItemId === item.id);
               const hasPrice = average?.averagePricePerKg !== null && average !== undefined;
 
+              // A line is "in the set" exactly when it has a quantity — that is
+              // what customising the mix means here, so it should look like it.
+              const inSet = line !== undefined;
+
               return (
-                <View key={item.id} style={styles.tableRow}>
+                <View key={item.id} style={[styles.tableRow, inSet && styles.tableRowInSet]}>
                   <View style={styles.colItem}>
                     <Text style={styles.tdBold}>{item.code}</Text>
                     <Text style={styles.tdMuted}>{item.name}</Text>
@@ -274,6 +284,25 @@ export default function BulkSetScreen() {
                 </View>
               );
             })}
+
+            {/* The sum the average comes from, so the column adds up on screen */}
+            <View style={styles.tableTotalRow}>
+              <Text style={[styles.tdBold, styles.colItem]}>
+                {draftItems.length} item{draftItems.length === 1 ? '' : 's'} in set
+              </Text>
+              <Text style={[styles.tdBold, styles.colQty]}>
+                {formatKg(valuation.totalQuantityKg)} kg
+              </Text>
+              <Text style={[styles.tdBold, styles.colNum, { color: Colors.primary }]}>
+                {formatRs(valuation.expectedPricePerKg)}
+              </Text>
+              <Text style={[styles.tdBold, styles.colNum]}>
+                {valuation.totalValue === null ? '—' : formatRs(valuation.totalValue, 0)}
+              </Text>
+              <Text style={[styles.tdBold, styles.colNum]}>
+                {valuation.totalValue === null ? '—' : formatPercent(1)}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -463,6 +492,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
+    gap: 8,
+  },
+  tableRowInSet: { backgroundColor: '#F6FBF6' },
+  tableTotalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
     gap: 8,
   },
   colItem: { flex: 2.2 },

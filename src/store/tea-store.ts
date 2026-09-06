@@ -566,21 +566,16 @@ export function selectOurItemHistoryBeforePeriod(
 }
 
 /**
- * The bulk set that was — or is being — sold at one auction.
+ * The most recently built bulk set — the one Prepare Bulk Set shows first.
  *
- * Quantities live on the set; prices only arrive on auction day. Pairing the
- * two is what turns a column of per-item results into one blended figure.
- * If more than one set points at the auction, the most recently created wins.
+ * This is the mix the auction screen blends through, whichever auction is
+ * selected. The factory prepares one set at a time and sells it; the set on the
+ * bench is therefore the set being priced, and pinning the blend to it keeps
+ * the two screens describing the same tea.
  */
-export function selectBulkSetForPeriod(
-  state: Snapshot,
-  sellingPeriodId: string,
-): BulkSet | null {
+export function selectLatestBulkSet(state: Snapshot): BulkSet | null {
   return (
-    state.bulkSets
-      .filter((b) => b.targetSellingPeriodId === sellingPeriodId)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .at(-1) ?? null
+    [...state.bulkSets].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1) ?? null
   );
 }
 

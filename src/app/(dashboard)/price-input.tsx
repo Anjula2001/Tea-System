@@ -17,7 +17,7 @@ import {
 } from '@/domain/averaging';
 import type { Comparison } from '@/domain/types';
 import {
-  selectBulkSetForPeriod,
+  selectLatestBulkSet,
   selectExternalResultsForPeriod,
   selectOurBulkForPeriod,
   selectOurItemHistoryBeforePeriod,
@@ -71,7 +71,9 @@ export default function AuctionResultsScreen() {
   const [itemDrafts, setItemDrafts] = useState<Record<string, string>>({});
   const [bulkDraft, setBulkDraft] = useState('');
   const [externalDrafts, setExternalDrafts] = useState<Record<string, string>>({});
-  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const [savedNotice, setSavedNotice] = useState<{ text: string; tone: 'ok' | 'warn' } | null>(
+    null,
+  );
   /** Off by default: the blended figure is derived, typing it is the exception. */
   const [bulkOverride, setBulkOverride] = useState(false);
 
@@ -90,6 +92,11 @@ export default function AuctionResultsScreen() {
     setBulkOverride(false);
   };
 
+  // The set on the bench. Its grades are what the blend needs, so they decide
+  // which prices are mandatory here rather than merely welcome.
+  const bulkSet = selectLatestBulkSet(state);
+  const quantityInSet = new Map(bulkSet?.items.map((i) => [i.teaItemId, i.quantityKg]) ?? []);
+
   // Each item's price against its own recent weeks — the answer to "what
   // happened to this grade?", which a bare input box cannot give. The baseline
   // stops short of this auction, so a new price never averages against itself.
@@ -101,9 +108,14 @@ export default function AuctionResultsScreen() {
       item,
       past,
       enteredPricePerKg,
+      required: quantityInSet.has(item.id),
       comparison: compare(enteredPricePerKg, past?.averagePricePerKg ?? null),
     };
   });
+
+  const requiredMovements = movements.filter((m) => m.required);
+  const otherMovements = movements.filter((m) => !m.required);
+  const missingRequired = requiredMovements.filter((m) => m.enteredPricePerKg === null);
 
   const tally = {
     up: movements.filter((m) => m.comparison.verdict === 'above').length,
@@ -111,10 +123,6 @@ export default function AuctionResultsScreen() {
     flat: movements.filter((m) => m.comparison.verdict === 'equal').length,
     pending: movements.filter((m) => m.enteredPricePerKg === null).length,
   };
-
-  // The bulk set this auction sells. Its quantities are the weights that turn
-  // the per-item prices above into one blended figure.
-  const bulkSet = selectBulkSetForPeriod(state, periodId);
 
   // Whatever is on screen right now — drafts winning over what is on record.
   const enteredPrices = new Map<string, number>(
@@ -130,8 +138,6 @@ export default function AuctionResultsScreen() {
   const typedBulk = parsePrice(bulkValue);
   const manualEntry = bulkOverride || bulkSet === null;
   const effectiveBulk = manualEntry ? typedBulk : blendedBulk;
-
-  const quantityInSet = new Map(bulkSet?.items.map((i) => [i.teaItemId, i.quantityKg]) ?? []);
 
   // Live preview of how this auction compares, using whatever is entered now.
   const preview = useMemo(() => {
@@ -161,25 +167,105 @@ export default function AuctionResultsScreen() {
       .filter((e): e is { externalFactoryId: string; pricePerKg: number } => e.pricePerKg !== null)
       .filter((e) => e.pricePerKg !== savedExternal.get(e.externalFactoryId));
 
-    // The blended figure is derived, so it is saved whenever it moves — no
-    // separate field to remember to update.
-    const bulk = effectiveBulk;
+    // A blend over part of the set is not the set's price. Until every required
+    // grade has a figure, the item prices are still worth recording — the
+    // blended number is not, so it is held back rather than saved half-made.
+    const held = !manualEntry && missingRequired.length > 0;
+    const bulk = held ? null : effectiveBulk;
     const bulkChanged = bulk !== null && bulk !== savedBulk;
 
     if (itemEntries.length > 0) recordOurPrices(period.id, itemEntries);
     if (bulkChanged) recordOurBulkResult(period.id, bulk, bulkSet?.id ?? null);
     if (externalEntries.length > 0) recordExternalResults(period.id, externalEntries);
 
+    const outstanding = held
+      ? ` The bulk price is on hold until ${missingRequired
+          .map((m) => m.item.code)
+          .join(', ')} ${missingRequired.length === 1 ? 'has' : 'have'} a price.`
+      : '';
+
     const changed = itemEntries.length + externalEntries.length + (bulkChanged ? 1 : 0);
     if (changed === 0) {
-      setSavedNotice('Nothing changed — no new entries recorded.');
+      setSavedNotice({
+        text: `Nothing changed — no new entries recorded.${outstanding}`,
+        tone: held ? 'warn' : 'ok',
+      });
     } else {
-      if (period.status === 'upcoming') markPeriodSold(period.id);
-      setSavedNotice(`Recorded ${changed} ${changed === 1 ? 'entry' : 'entries'} for ${period.label}.`);
+      // An auction is only "sold" once its bulk figure is on record.
+      if (period.status === 'upcoming' && !held) markPeriodSold(period.id);
+      setSavedNotice({
+        text: `Recorded ${changed} ${changed === 1 ? 'entry' : 'entries'} for ${period.label}.${outstanding}`,
+        tone: held ? 'warn' : 'ok',
+      });
       setItemDrafts({});
       setBulkDraft('');
       setExternalDrafts({});
     }
+  };
+
+  /**
+   * One grade's input. Shared by both groups so a required grade and an
+   * optional one differ only where they genuinely differ — the "needed" mark
+   * and the amber field — and not in layout or in what they tell you.
+   */
+  const renderPriceCell = ({
+    item,
+    past,
+    comparison,
+    required,
+    enteredPricePerKg,
+  }: (typeof movements)[number]) => {
+    const missing = required && enteredPricePerKg === null;
+
+    return (
+      <View key={item.id} style={styles.inputCell}>
+        <View style={styles.inputLabelRow}>
+          <Text style={styles.inputCode}>{item.code}</Text>
+          {quantityInSet.has(item.id) && (
+            <Text style={styles.setTag}>{formatKg(quantityInSet.get(item.id)!)} kg in set</Text>
+          )}
+          {missing && <Text style={styles.neededTag}>needed</Text>}
+          {savedItemPrices.has(item.id) && <Text style={styles.savedTag}>on record</Text>}
+        </View>
+        <Text style={styles.inputName}>{item.name}</Text>
+
+        <View style={[styles.inputWrap, missing && styles.inputWrapMissing]}>
+          <Text style={styles.inputPrefix}>Rs.</Text>
+          <TextInput
+            style={styles.input}
+            value={itemValue(item.id)}
+            onChangeText={(text) => setItemDrafts((prev) => ({ ...prev, [item.id]: text }))}
+            keyboardType="decimal-pad"
+            placeholder="0.00"
+            placeholderTextColor={Colors.textSecondary}
+          />
+          <Text style={styles.inputSuffix}>/kg</Text>
+        </View>
+
+        {/* This grade against its own recent weeks */}
+        {past && past.averagePricePerKg !== null ? (
+          <View style={styles.pastBlock}>
+            <View style={styles.pastLine}>
+              <Text style={styles.pastLabel}>
+                Avg of {past.periodsCounted} auction{past.periodsCounted === 1 ? '' : 's'}
+              </Text>
+              <Text style={styles.pastValue}>Rs. {formatRs(past.averagePricePerKg)}</Text>
+            </View>
+            {past.lastPricePerKg !== null && (
+              <View style={styles.pastLine}>
+                <Text style={styles.pastLabel}>{past.lastPeriodLabel}</Text>
+                <Text style={styles.pastValue}>Rs. {formatRs(past.lastPricePerKg)}</Text>
+              </View>
+            )}
+            <MovementChip comparison={comparison} />
+          </View>
+        ) : (
+          <View style={styles.pastBlock}>
+            <Text style={styles.pastEmpty}>No earlier auctions to compare against.</Text>
+          </View>
+        )}
+      </View>
+    );
   };
 
   return (
@@ -226,8 +312,10 @@ export default function AuctionResultsScreen() {
         </View>
 
         {savedNotice && (
-          <View style={styles.notice}>
-            <Text style={styles.noticeText}>{savedNotice}</Text>
+          <View style={[styles.notice, savedNotice.tone === 'warn' && styles.noticeWarn]}>
+            <Text style={[styles.noticeText, savedNotice.tone === 'warn' && styles.noticeWarnText]}>
+              {savedNotice.text}
+            </Text>
           </View>
         )}
 
@@ -237,11 +325,7 @@ export default function AuctionResultsScreen() {
             icon={<LeafIcon color={Colors.primary} size={18} />}
             tint={Colors.primaryLight}
             title="Our Tea Item Prices"
-            subtitle={
-              bulkSet
-                ? `What 1 kg of each item fetched at this auction, each set against that grade's own average from earlier auctions. Weighted by the kilos in ${bulkSet.reference}, they also give the blended bulk price below.`
-                : "What 1 kg of each item fetched at this auction, each set against that grade's own average from earlier auctions."
-            }
+            subtitle="What 1 kg of each item fetched at this auction, each set against that grade's own average from earlier auctions."
           />
           {/* What moved, at a glance, before reading the grid item by item */}
           {tally.up + tally.down + tally.flat > 0 && (
@@ -257,59 +341,44 @@ export default function AuctionResultsScreen() {
             </View>
           )}
 
-          <View style={styles.inputGrid}>
-            {movements.map(({ item, past, comparison }) => (
-              <View key={item.id} style={styles.inputCell}>
-                <View style={styles.inputLabelRow}>
-                  <Text style={styles.inputCode}>{item.code}</Text>
-                  {quantityInSet.has(item.id) && (
-                    <Text style={styles.setTag}>
-                      {formatKg(quantityInSet.get(item.id)!)} kg in set
-                    </Text>
-                  )}
-                  {savedItemPrices.has(item.id) && <Text style={styles.savedTag}>on record</Text>}
-                </View>
-                <Text style={styles.inputName}>{item.name}</Text>
-                <View style={styles.inputWrap}>
-                  <Text style={styles.inputPrefix}>Rs.</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={itemValue(item.id)}
-                    onChangeText={(text) =>
-                      setItemDrafts((prev) => ({ ...prev, [item.id]: text }))
-                    }
-                    keyboardType="decimal-pad"
-                    placeholder="0.00"
-                    placeholderTextColor={Colors.textSecondary}
-                  />
-                  <Text style={styles.inputSuffix}>/kg</Text>
-                </View>
-
-                {/* This grade against its own recent weeks */}
-                {past && past.averagePricePerKg !== null ? (
-                  <View style={styles.pastBlock}>
-                    <View style={styles.pastLine}>
-                      <Text style={styles.pastLabel}>
-                        Avg of {past.periodsCounted} auction{past.periodsCounted === 1 ? '' : 's'}
-                      </Text>
-                      <Text style={styles.pastValue}>Rs. {formatRs(past.averagePricePerKg)}</Text>
-                    </View>
-                    {past.lastPricePerKg !== null && (
-                      <View style={styles.pastLine}>
-                        <Text style={styles.pastLabel}>{past.lastPeriodLabel}</Text>
-                        <Text style={styles.pastValue}>Rs. {formatRs(past.lastPricePerKg)}</Text>
-                      </View>
-                    )}
-                    <MovementChip comparison={comparison} />
-                  </View>
-                ) : (
-                  <View style={styles.pastBlock}>
-                    <Text style={styles.pastEmpty}>No earlier auctions to compare against.</Text>
-                  </View>
-                )}
+          {bulkSet && requiredMovements.length > 0 && (
+            <View style={styles.group}>
+              <View style={styles.groupHeader}>
+                <Text style={styles.groupTitle}>Required for {bulkSet.reference}</Text>
+                <Text
+                  style={[
+                    styles.groupCount,
+                    missingRequired.length === 0 ? styles.groupCountDone : styles.groupCountTodo,
+                  ]}>
+                  {requiredMovements.length - missingRequired.length} of {requiredMovements.length}{' '}
+                  priced
+                </Text>
               </View>
-            ))}
-          </View>
+              <Text style={styles.groupNote}>
+                These grades carry the kilos in the set, so the blended bulk price below cannot be
+                worked out until every one of them has a price.
+              </Text>
+              <View style={styles.inputGrid}>{requiredMovements.map(renderPriceCell)}</View>
+            </View>
+          )}
+
+          {otherMovements.length > 0 && (
+            <View style={styles.group}>
+              <View style={styles.groupHeader}>
+                <Text style={styles.groupTitle}>
+                  {bulkSet && requiredMovements.length > 0 ? 'Other grades' : 'Tea items'}
+                </Text>
+                <Text style={styles.groupCount}>optional</Text>
+              </View>
+              {bulkSet && requiredMovements.length > 0 && (
+                <Text style={styles.groupNote}>
+                  Not in {bulkSet.reference}. Record what they fetched and it builds their price
+                  history — it just does not enter this auction's blend.
+                </Text>
+              )}
+              <View style={styles.inputGrid}>{otherMovements.map(renderPriceCell)}</View>
+            </View>
+          )}
         </View>
 
         {/* 2 — our blended bulk price, worked out from the prices above */}
@@ -326,7 +395,11 @@ export default function AuctionResultsScreen() {
               <View style={styles.blendCard}>
                 <View style={styles.blendFigure}>
                   <Text style={styles.blendLabel}>
-                    {manualEntry ? 'BLENDED FROM ITEM PRICES · NOT IN USE' : 'BLENDED FROM ITEM PRICES'}
+                    {manualEntry
+                      ? 'BLENDED FROM ITEM PRICES · NOT IN USE'
+                      : missingRequired.length > 0
+                        ? 'BLENDED FROM ITEM PRICES · INCOMPLETE'
+                        : 'BLENDED FROM ITEM PRICES'}
                   </Text>
                   <Text style={[styles.blendValue, manualEntry && styles.blendValueMuted]}>
                     Rs. {formatRs(blendedBulk)}
@@ -335,7 +408,12 @@ export default function AuctionResultsScreen() {
                   <Text style={styles.blendMeta}>
                     {blendedBulk === null
                       ? `Enter the item prices above and ${bulkSet.reference} blends them here.`
-                      : `${bulkSet.reference} · Σ(kg × price) ÷ Σ(kg) over ${formatKg(blend.pricedQuantityKg)} of ${formatKg(blend.totalQuantityKg)} kg`}
+                      : `Σ(kg × price) ÷ Σ(kg) over ${formatKg(blend.pricedQuantityKg)} of ${formatKg(blend.totalQuantityKg)} kg`}
+                  </Text>
+                  <Text style={styles.blendSource}>
+                    Mix from {bulkSet.reference} — the latest set built on Prepare Bulk Set,
+                    {' '}{formatKg(blend.totalQuantityKg)} kg across {bulkSet.items.length} grade
+                    {bulkSet.items.length === 1 ? '' : 's'}.
                   </Text>
                 </View>
                 <Pressable
@@ -395,8 +473,8 @@ export default function AuctionResultsScreen() {
             </>
           ) : (
             <Text style={styles.blendMissing}>
-              No bulk set is attached to this auction, so there are no kilos to weight the item
-              prices by. Enter the blended figure by hand, or create the set on Prepare Bulk Set.
+              No bulk set has been built yet, so there are no kilos to weight the item prices by.
+              Enter the blended figure by hand, or build the set on Prepare Bulk Set.
             </Text>
           )}
 
@@ -630,6 +708,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.above,
   },
   noticeText: { fontSize: 13, color: Colors.above, fontWeight: '600' },
+  noticeWarn: { backgroundColor: Colors.accentLight, borderColor: '#F0D48A' },
+  noticeWarnText: { color: '#8A6D1F' },
 
   sectionCard: {
     backgroundColor: Colors.card,
@@ -652,6 +732,28 @@ const styles = StyleSheet.create({
   inputLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   inputCode: { fontSize: 13, fontWeight: '700', color: Colors.text },
   savedTag: { fontSize: 10, fontWeight: '600', color: Colors.primary },
+  neededTag: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#8A6D1F',
+    backgroundColor: Colors.accentLight,
+    borderWidth: 1,
+    borderColor: '#F0D48A',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    overflow: 'hidden',
+  },
+
+  // Required grades are grouped, and the group carries the explanation — so a
+  // field only has to say "needed", not why.
+  group: { gap: 10 },
+  groupHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 },
+  groupTitle: { fontSize: 13, fontWeight: '700', color: Colors.text },
+  groupCount: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary },
+  groupCountDone: { color: Colors.above },
+  groupCountTodo: { color: '#8A6D1F' },
+  groupNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16, marginTop: -4 },
   setTag: {
     fontSize: 10,
     fontWeight: '600',
@@ -712,6 +814,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   // The affixes must not shrink, or a tight column clips "/kg" mid-glyph.
+  inputWrapMissing: { borderColor: Colors.accent, backgroundColor: Colors.accentLight },
   inputPrefix: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600', flexShrink: 0 },
   inputSuffix: { fontSize: 12, color: Colors.textSecondary, flexShrink: 0 },
   input: { flex: 1, minWidth: 0, paddingVertical: 10, fontSize: 15, fontWeight: '600', color: Colors.text },
@@ -736,6 +839,7 @@ const styles = StyleSheet.create({
   blendValueMuted: { color: Colors.textSecondary },
   blendUnit: { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
   blendMeta: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
+  blendSource: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16, fontStyle: 'italic' },
   overrideToggle: {
     borderWidth: 1,
     borderColor: Colors.primary,

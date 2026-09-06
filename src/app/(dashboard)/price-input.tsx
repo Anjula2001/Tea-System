@@ -2,7 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { ScrollView, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
+import { useLoadedStore } from '@/components/data-state';
 import Header from '@/components/header';
 import VerdictBadge from '@/components/verdict-badge';
 import { LeafIcon, MoneyIcon, ChartIcon } from '@/components/ui-icons';
@@ -47,12 +49,15 @@ import {
  * per grade. Re-saving a value records a correction rather than an error.
  */
 export default function AuctionResultsScreen() {
+  const { ready, gate } = useLoadedStore();
   const state = useTeaStore();
   const { teaItems, externalFactories, sellingPeriods } = state;
   const recordOurPrices = useTeaStore((s) => s.recordOurPrices);
   const recordOurBulkResult = useTeaStore((s) => s.recordOurBulkResult);
+  const blendOurBulkResult = useTeaStore((s) => s.blendOurBulkResult);
   const recordExternalResults = useTeaStore((s) => s.recordExternalResults);
   const markPeriodSold = useTeaStore((s) => s.markPeriodSold);
+  const saving = useTeaStore((s) => s.saving);
 
   const orderedPeriods = useMemo(
     () => [...sellingPeriods].sort((a, b) => b.auctionDate.localeCompare(a.auctionDate)),
@@ -71,7 +76,10 @@ export default function AuctionResultsScreen() {
   const [itemDrafts, setItemDrafts] = useState<Record<string, string>>({});
   const [bulkDraft, setBulkDraft] = useState('');
   const [externalDrafts, setExternalDrafts] = useState<Record<string, string>>({});
-  const [savedNotice, setSavedNotice] = useState<{ text: string; tone: 'ok' | 'warn' } | null>(
+  const [savedNotice, setSavedNotice] = useState<{
+    text: string;
+    tone: 'ok' | 'warn' | 'error';
+  } | null>(
     null,
   );
   /** Off by default: the blended figure is derived, typing it is the exception. */
@@ -154,7 +162,7 @@ export default function AuctionResultsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveBulk, externalDrafts, savedExternal, externalFactories]);
 
-  const save = () => {
+  const save = async () => {
     if (!period) return;
 
     const itemEntries = movements
@@ -171,37 +179,63 @@ export default function AuctionResultsScreen() {
     // grade has a figure, the item prices are still worth recording — the
     // blended number is not, so it is held back rather than saved half-made.
     const held = !manualEntry && missingRequired.length > 0;
-    const bulk = held ? null : effectiveBulk;
-    const bulkChanged = bulk !== null && bulk !== savedBulk;
 
-    if (itemEntries.length > 0) recordOurPrices(period.id, itemEntries);
-    if (bulkChanged) recordOurBulkResult(period.id, bulk, bulkSet?.id ?? null);
-    if (externalEntries.length > 0) recordExternalResults(period.id, externalEntries);
+    try {
+      // Item prices first: the backend derives the blend from what it holds, so
+      // it has to hold this auction's prices before it can be asked.
+      if (itemEntries.length > 0) await recordOurPrices(period.id, itemEntries);
+      if (externalEntries.length > 0) await recordExternalResults(period.id, externalEntries);
 
-    const outstanding = held
-      ? ` The bulk price is on hold until ${missingRequired
-          .map((m) => m.item.code)
-          .join(', ')} ${missingRequired.length === 1 ? 'has' : 'have'} a price.`
-      : '';
+      let bulkRecorded = false;
+      if (manualEntry) {
+        if (typedBulk !== null && typedBulk !== savedBulk) {
+          await recordOurBulkResult(period.id, typedBulk, bulkSet?.id ?? null);
+          bulkRecorded = true;
+        }
+      } else if (!held && bulkSet && blendedBulk !== null && blendedBulk !== savedBulk) {
+        // The backend recomputes rather than trusting the figure on screen, so
+        // the number on file is always the database's own arithmetic.
+        await blendOurBulkResult(period.id, bulkSet.id);
+        bulkRecorded = true;
+      }
 
-    const changed = itemEntries.length + externalEntries.length + (bulkChanged ? 1 : 0);
-    if (changed === 0) {
-      setSavedNotice({
-        text: `Nothing changed — no new entries recorded.${outstanding}`,
-        tone: held ? 'warn' : 'ok',
-      });
-    } else {
+      const outstanding = held
+        ? ` The bulk price is on hold until ${missingRequired
+            .map((m) => m.item.code)
+            .join(', ')} ${missingRequired.length === 1 ? 'has' : 'have'} a price.`
+        : '';
+
+      const changed = itemEntries.length + externalEntries.length + (bulkRecorded ? 1 : 0);
+      if (changed === 0) {
+        setSavedNotice({
+          text: `Nothing changed — no new entries recorded.${outstanding}`,
+          tone: held ? 'warn' : 'ok',
+        });
+        return;
+      }
+
       // An auction is only "sold" once its bulk figure is on record.
-      if (period.status === 'upcoming' && !held) markPeriodSold(period.id);
+      if (period.status === 'upcoming' && !held) await markPeriodSold(period.id);
+
       setSavedNotice({
-        text: `Recorded ${changed} ${changed === 1 ? 'entry' : 'entries'} for ${period.label}.${outstanding}`,
+        text: `Saved ${changed} ${changed === 1 ? 'entry' : 'entries'} for ${period.label} to the database.${outstanding}`,
         tone: held ? 'warn' : 'ok',
       });
       setItemDrafts({});
       setBulkDraft('');
       setExternalDrafts({});
+    } catch (error) {
+      setSavedNotice({
+        text:
+          error instanceof ApiError
+            ? `Not saved — ${error.message}`
+            : 'Not saved — the API could not be reached.',
+        tone: 'error',
+      });
     }
   };
+
+  if (!ready) return gate;
 
   /**
    * One grade's input. Shared by both groups so a required grade and an
@@ -312,8 +346,18 @@ export default function AuctionResultsScreen() {
         </View>
 
         {savedNotice && (
-          <View style={[styles.notice, savedNotice.tone === 'warn' && styles.noticeWarn]}>
-            <Text style={[styles.noticeText, savedNotice.tone === 'warn' && styles.noticeWarnText]}>
+          <View
+            style={[
+              styles.notice,
+              savedNotice.tone === 'warn' && styles.noticeWarn,
+              savedNotice.tone === 'error' && styles.noticeError,
+            ]}>
+            <Text
+              style={[
+                styles.noticeText,
+                savedNotice.tone === 'warn' && styles.noticeWarnText,
+                savedNotice.tone === 'error' && styles.noticeErrorText,
+              ]}>
               {savedNotice.text}
             </Text>
           </View>
@@ -584,9 +628,12 @@ export default function AuctionResultsScreen() {
           </View>
         </View>
 
-        <Pressable style={styles.saveButton} onPress={save}>
+        <Pressable
+          style={[styles.saveButton, saving && styles.saveButtonBusy]}
+          disabled={saving}
+          onPress={save}>
           <Text style={styles.saveButtonText}>
-            Save results for {period?.label ?? 'this auction'}
+            {saving ? 'Saving…' : `Save results for ${period?.label ?? 'this auction'}`}
           </Text>
         </Pressable>
         <Text style={styles.appendNote}>
@@ -710,6 +757,8 @@ const styles = StyleSheet.create({
   noticeText: { fontSize: 13, color: Colors.above, fontWeight: '600' },
   noticeWarn: { backgroundColor: Colors.accentLight, borderColor: '#F0D48A' },
   noticeWarnText: { color: '#8A6D1F' },
+  noticeError: { backgroundColor: Colors.belowLight, borderColor: Colors.below },
+  noticeErrorText: { color: Colors.below },
 
   sectionCard: {
     backgroundColor: Colors.card,
@@ -923,6 +972,7 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     alignItems: 'center',
   },
+  saveButtonBusy: { opacity: 0.6 },
   saveButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   appendNote: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center', lineHeight: 16 },
 });

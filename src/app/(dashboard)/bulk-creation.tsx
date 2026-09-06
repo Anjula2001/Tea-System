@@ -2,7 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { ScrollView, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
+import { useLoadedStore } from '@/components/data-state';
 import Header from '@/components/header';
 import VerdictBadge from '@/components/verdict-badge';
 import { PlusIcon, LeafIcon } from '@/components/ui-icons';
@@ -32,11 +34,17 @@ import {
  *
  * The per-item rows deliberately carry no market column. Other factories report
  * a single blended number, so a market price for BOP does not exist to show.
+ *
+ * Saving goes to the API and waits for it. The set that comes back is the
+ * database's, not the draft — so a reference clash or a rejected quantity shows
+ * as the failure it is rather than as a success message over nothing saved.
  */
 export default function BulkSetScreen() {
+  const { ready, gate } = useLoadedStore();
   const state = useTeaStore();
   const { teaItems, bulkSets, sellingPeriods, range } = state;
   const saveBulkSet = useTeaStore((s) => s.saveBulkSet);
+  const saving = useTeaStore((s) => s.saving);
 
   const upcoming = selectUpcomingPeriod(state);
   const editable = bulkSets.filter((b) => b.status !== 'sold');
@@ -48,7 +56,7 @@ export default function BulkSetScreen() {
   const [quantities, setQuantities] = useState<Record<string, string>>(() =>
     seedQuantities(selected?.items ?? []),
   );
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null);
 
   const switchSet = (id: string | null) => {
     const target = id ? bulkSets.find((b) => b.id === id) ?? null : null;
@@ -73,20 +81,46 @@ export default function BulkSetScreen() {
   const averageByItem = new Map(averages.map((a) => [a.teaItemId, a]));
   const verdict = compare(valuation.expectedPricePerKg, market.averagePricePerKg);
 
-  const save = () => {
+  const save = async () => {
     if (draftItems.length === 0) {
-      setNotice('Add a quantity for at least one tea item before saving.');
+      setNotice({ text: 'Add a quantity for at least one tea item before saving.', tone: 'error' });
       return;
     }
-    const saved = saveBulkSet({
-      id: selectedId ?? undefined,
-      reference,
-      targetSellingPeriodId: selected?.targetSellingPeriodId ?? upcoming?.id ?? null,
-      items: draftItems,
-    });
-    setSelectedId(saved.id);
-    setNotice(`Saved ${saved.reference} — ${formatKg(valuation.totalQuantityKg)} kg.`);
+    if (reference.trim() === '') {
+      setNotice({ text: 'Give the set a reference before saving.', tone: 'error' });
+      return;
+    }
+
+    try {
+      const saved = await saveBulkSet({
+        id: selectedId ?? undefined,
+        reference: reference.trim(),
+        targetSellingPeriodId: selected?.targetSellingPeriodId ?? upcoming?.id ?? null,
+        items: draftItems,
+      });
+
+      // Re-seed from what the database actually stored, not from the draft.
+      setSelectedId(saved.id);
+      setReference(saved.reference);
+      setQuantities(seedQuantities(saved.items));
+      setNotice({
+        text: `Saved ${saved.reference} to the database — ${saved.items.length} grades, ${formatKg(
+          saved.items.reduce((sum, item) => sum + item.quantityKg, 0),
+        )} kg.`,
+        tone: 'ok',
+      });
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof ApiError
+            ? `Not saved — ${error.message}`
+            : 'Not saved — the API could not be reached.',
+        tone: 'error',
+      });
+    }
   };
+
+  if (!ready) return gate;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -134,8 +168,10 @@ export default function BulkSetScreen() {
         </View>
 
         {notice && (
-          <View style={styles.notice}>
-            <Text style={styles.noticeText}>{notice}</Text>
+          <View style={[styles.notice, notice.tone === 'error' && styles.noticeError]}>
+            <Text style={[styles.noticeText, notice.tone === 'error' && styles.noticeErrorText]}>
+              {notice.text}
+            </Text>
           </View>
         )}
 
@@ -306,8 +342,13 @@ export default function BulkSetScreen() {
           </View>
         </View>
 
-        <Pressable style={styles.saveButton} onPress={save}>
-          <Text style={styles.saveButtonText}>Save {reference || 'bulk set'}</Text>
+        <Pressable
+          style={[styles.saveButton, saving && styles.saveButtonBusy]}
+          disabled={saving}
+          onPress={save}>
+          <Text style={styles.saveButtonText}>
+            {saving ? 'Saving…' : `Save ${reference || 'bulk set'}`}
+          </Text>
         </Pressable>
         <Text style={styles.footNote}>
           This is decision support. The system never sets a selling price — it shows what the set is
@@ -419,6 +460,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.above,
   },
   noticeText: { fontSize: 13, color: Colors.above, fontWeight: '600' },
+  noticeError: { backgroundColor: Colors.belowLight, borderColor: Colors.below },
+  noticeErrorText: { color: Colors.below },
 
   summaryCard: {
     flexDirection: 'row',
@@ -529,6 +572,7 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     alignItems: 'center',
   },
+  saveButtonBusy: { opacity: 0.6 },
   saveButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   footNote: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center', lineHeight: 16 },
 });

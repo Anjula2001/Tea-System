@@ -3,6 +3,7 @@ import { ScrollView, View, Text, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors } from '@/constants/colors';
+import { useLoadedStore } from '@/components/data-state';
 import Header from '@/components/header';
 import VerdictBadge from '@/components/verdict-badge';
 import { ChartIcon } from '@/components/ui-icons';
@@ -29,6 +30,7 @@ type Filter = 'all' | 'above' | 'below';
  * the same span.
  */
 export default function ReportsScreen() {
+  const { ready, gate } = useLoadedStore();
   const state = useTeaStore();
   const { sellingPeriods, teaItems, externalFactories } = state;
   const setRange = useTeaStore((s) => s.setRange);
@@ -64,6 +66,8 @@ export default function ReportsScreen() {
   }, [sellingPeriods]);
 
   const allPeriods = periodsInRange(state, range);
+
+  if (!ready) return gate;
 
   return (
     <SafeAreaView style={styles.safeArea}>

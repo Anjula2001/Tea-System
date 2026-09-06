@@ -83,6 +83,29 @@ export interface BulkSet {
   items: BulkSetItem[];
 }
 
+/**
+ * A bulk set line as the API returns it — the quantity plus the catalogue
+ * fields already resolved, so a caller never has to join back to tea items.
+ */
+export interface BulkSetLine extends BulkSetItem {
+  id: string;
+  bulkSetId: string;
+  teaItemCode: string;
+  teaItemName: string;
+}
+
+/**
+ * What `GET /bulk-sets/:id` and `/bulk-sets/latest` return.
+ *
+ * Structurally a `BulkSet`, deliberately: the store can hold these and every
+ * selector written against `BulkSet` keeps working unchanged.
+ */
+export interface BulkSetWithItems extends Omit<BulkSet, 'items'> {
+  targetSellingPeriod: SellingPeriod | null;
+  items: BulkSetLine[];
+  totalQuantityKg: number;
+}
+
 // ------------------------------------------------------------ computed shapes
 
 export interface DateRange {

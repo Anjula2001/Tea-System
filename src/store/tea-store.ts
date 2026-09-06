@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 
+import { api, ApiError } from '@/api';
 import { blendedAverage, compare, marketAverage, valueBulkSet } from '@/domain/averaging';
 import type {
   BulkSet,
   BulkSetItem,
   BulkSetValuation,
+  BulkSetWithItems,
   Comparison,
   DateRange,
   ExternalFactory,
@@ -32,144 +34,24 @@ import type {
  *     · their sold bulk price per kg, one number each   → externalFactoryResults
  *
  * Other factories have no tea items and no bulk sets here, because we never
- * learn theirs. Price facts are append-only: a correction is a new entry with a
- * later `recordedAt`, and every read resolves to the latest per (subject,
- * auction). That mirrors the backend exactly, so replacing this seed data with
- * API calls is a change of source, not of shape.
+ * learn theirs.
+ *
+ * Every one of those facts comes from the API — this store is a cache of the
+ * database, never a source of truth. Reads are plain selectors over the cached
+ * snapshot so the screens stay free of arithmetic; writes go to the backend
+ * first and only then refresh what changed. A write that fails throws, and the
+ * screen says so, because a success message over an unsaved record is worse
+ * than an error.
+ *
+ * Price facts stay append-only server-side: a correction is a new row with a
+ * later `recordedAt`, and the API hands back only the winning row per
+ * (subject, auction). `latestPerKey` below is belt-and-braces for the same
+ * rule, so a selector cannot double-count if a list ever arrives unresolved.
  */
 
-// ------------------------------------------------------------------ seed data
-// Matches backend/src/db/seed.ts so both halves agree before they are wired.
-
-const TEA_ITEM_SEED: { code: string; name: string; category: string; history: number[] }[] = [
-  { code: 'BOP',    name: 'Broken Orange Pekoe',           category: 'Broken Leaf',  history: [1210, 1235, 1228, 1262, 1315] },
-  { code: 'BOPF',   name: 'Broken Orange Pekoe Fannings',  category: 'Fannings',     history: [1145, 1160, 1152, 1186, 1257] },
-  { code: 'OP',     name: 'Orange Pekoe',                  category: 'Whole Leaf',   history: [1288, 1304, 1296, 1331, 1381] },
-  { code: 'DUST',   name: 'Dust Grade 1',                  category: 'Dust',         history: [ 930,  948,  941,  967, 1014] },
-  { code: 'FBOP1',  name: 'Flowery Broken Orange Pekoe 1', category: 'Flowery Leaf', history: [1572, 1596, 1588, 1621, 1690] },
-  { code: 'PEKOE1', name: 'Pekoe 1',                       category: 'Pekoe',        history: [1498, 1521, 1512, 1547, 1604] },
-  { code: 'BP',     name: 'Broken Pekoe',                  category: 'Broken Pekoe', history: [1272, 1290, 1281, 1318, 1366] },
-];
-
-const EXTERNAL_SEED: { code: string; name: string; region: string; history: number[] }[] = [
-  { code: 'HE-01', name: 'Highland Estates No. 1', region: 'Kandy',        history: [1218, 1240, 1231, 1266, 1322] },
-  { code: 'MP-02', name: 'Mountain Peak Factory',  region: 'Dimbula',      history: [1265, 1288, 1279, 1314, 1370] },
-  { code: 'SV-07', name: 'Silver Valley Tea Co.',  region: 'Nuwara Eliya', history: [1241, 1259, 1252, 1287, 1341] },
-  { code: 'RG-03', name: 'Rangala Plantations',    region: 'Uva',          history: [1196, 1217, 1209, 1244, 1298] },
-];
-
-const PERIOD_SEED = [
-  { label: 'Auction 21', auctionDate: '2026-06-03', status: 'sold' as const },
-  { label: 'Auction 22', auctionDate: '2026-06-24', status: 'sold' as const },
-  { label: 'Auction 23', auctionDate: '2026-07-15', status: 'sold' as const },
-  { label: 'Auction 24', auctionDate: '2026-08-05', status: 'sold' as const },
-  { label: 'Auction 25', auctionDate: '2026-08-26', status: 'sold' as const },
-  { label: 'Auction 26', auctionDate: '2026-09-16', status: 'upcoming' as const },
-];
-
-/** What our own bulk set actually fetched per kg, at each sold auction. */
-const OUR_BULK_SEED = [1243, 1264, 1256, 1291, 1347];
-
-const teaItems: TeaItem[] = TEA_ITEM_SEED.map((item, index) => ({
-  id: `ti-${item.code.toLowerCase()}`,
-  code: item.code,
-  name: item.name,
-  category: item.category,
-  sortOrder: index,
-  active: true,
-}));
-
-const externalFactories: ExternalFactory[] = EXTERNAL_SEED.map((factory) => ({
-  id: `ef-${factory.code.toLowerCase()}`,
-  code: factory.code,
-  name: factory.name,
-  region: factory.region,
-  active: true,
-}));
-
-const sellingPeriods: SellingPeriod[] = PERIOD_SEED.map((period, index) => ({
-  id: `sp-${index + 21}`,
-  label: period.label,
-  auctionDate: period.auctionDate,
-  status: period.status,
-}));
-
-const soldPeriods = sellingPeriods.filter((p) => p.status === 'sold');
-
-const ourItemPrices: OurItemPrice[] = TEA_ITEM_SEED.flatMap((item, itemIndex) =>
-  soldPeriods.map((period, periodIndex) => ({
-    id: `oip-${itemIndex}-${periodIndex}`,
-    teaItemId: teaItems[itemIndex]!.id,
-    sellingPeriodId: period.id,
-    pricePerKg: item.history[periodIndex]!,
-    recordedAt: `${period.auctionDate}T10:00:00.000Z`,
-  })),
-);
-
-const ourBulkResults: OurBulkResult[] = soldPeriods.map((period, index) => ({
-  id: `obr-${index}`,
-  sellingPeriodId: period.id,
-  bulkSetId: null,
-  pricePerKg: OUR_BULK_SEED[index]!,
-  recordedAt: `${period.auctionDate}T15:00:00.000Z`,
-}));
-
-const externalFactoryResults: ExternalFactoryResult[] = EXTERNAL_SEED.flatMap(
-  (factory, factoryIndex) =>
-    soldPeriods.map((period, periodIndex) => ({
-      id: `efr-${factoryIndex}-${periodIndex}`,
-      externalFactoryId: externalFactories[factoryIndex]!.id,
-      sellingPeriodId: period.id,
-      pricePerKg: factory.history[periodIndex]!,
-      recordedAt: `${period.auctionDate}T16:00:00.000Z`,
-    })),
-);
-
-const bulkSets: BulkSet[] = [
-  {
-    id: 'bs-100',
-    reference: 'BS-100',
-    targetSellingPeriodId: 'sp-24',
-    status: 'sold',
-    notes: 'Sold at Auction 24.',
-    createdAt: '2026-07-20T09:00:00.000Z',
-    items: [
-      { teaItemId: 'ti-bop', quantityKg: 520 },
-      { teaItemId: 'ti-bopf', quantityKg: 310 },
-      { teaItemId: 'ti-op', quantityKg: 240 },
-      { teaItemId: 'ti-dust', quantityKg: 130 },
-    ],
-  },
-  {
-    id: 'bs-101',
-    reference: 'BS-101',
-    targetSellingPeriodId: 'sp-25',
-    status: 'sold',
-    notes: 'Sold at Auction 25.',
-    createdAt: '2026-08-10T09:00:00.000Z',
-    items: [
-      { teaItemId: 'ti-bop', quantityKg: 500 },
-      { teaItemId: 'ti-bopf', quantityKg: 300 },
-      { teaItemId: 'ti-op', quantityKg: 200 },
-      { teaItemId: 'ti-dust', quantityKg: 100 },
-    ],
-  },
-  {
-    id: 'bs-102',
-    reference: 'BS-102',
-    targetSellingPeriodId: 'sp-26',
-    status: 'pending',
-    notes: 'Being prepared for Auction 26.',
-    createdAt: '2026-09-01T09:00:00.000Z',
-    items: [
-      { teaItemId: 'ti-bop', quantityKg: 400 },
-      { teaItemId: 'ti-bopf', quantityKg: 250 },
-      { teaItemId: 'ti-op', quantityKg: 350 },
-    ],
-  },
-];
-
 // ---------------------------------------------------------------------- store
+
+export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 interface TeaStoreState {
   teaItems: TeaItem[];
@@ -182,35 +64,49 @@ interface TeaStoreState {
   /** The date range every average on screen is drawn from. */
   range: DateRange;
 
+  /** Whether the cache has been filled from the API yet. */
+  status: LoadStatus;
+  /** Why the last load failed, in words worth showing someone. */
+  error: string | null;
+  /** True while a save is in flight, so screens can disable their buttons. */
+  saving: boolean;
+
+  /** Fill the cache from the API. Safe to call repeatedly. */
+  load: (options?: { force?: boolean }) => Promise<void>;
+
   setRange: (range: DateRange) => void;
   resetRange: () => void;
 
-  /** Append our achieved per-item prices for one auction. */
+  /** Record our achieved per-item prices for one auction. */
   recordOurPrices: (
     sellingPeriodId: string,
     entries: { teaItemId: string; pricePerKg: number }[],
-  ) => void;
-  /** Append our whole bulk set's blended price for one auction. */
+  ) => Promise<void>;
+  /** Record a hand-typed blended bulk price for one auction. */
   recordOurBulkResult: (
     sellingPeriodId: string,
     pricePerKg: number,
     bulkSetId?: string | null,
-  ) => void;
-  /** Append other factories' sold bulk prices for one auction. */
+  ) => Promise<void>;
+  /**
+   * Ask the backend to derive the blended bulk price from the item prices it
+   * already holds. Throws when a grade in the set is still unpriced.
+   */
+  blendOurBulkResult: (sellingPeriodId: string, bulkSetId?: string | null) => Promise<void>;
+  /** Record other factories' sold bulk prices for one auction. */
   recordExternalResults: (
     sellingPeriodId: string,
     entries: { externalFactoryId: string; pricePerKg: number }[],
-  ) => void;
+  ) => Promise<void>;
 
   saveBulkSet: (input: {
     id?: string;
     reference: string;
     targetSellingPeriodId: string | null;
     items: BulkSetItem[];
-  }) => BulkSet;
-  removeBulkSet: (id: string) => void;
-  addSellingPeriod: (label: string, auctionDate: string) => SellingPeriod;
-  markPeriodSold: (id: string) => void;
+  }) => Promise<BulkSet>;
+  addSellingPeriod: (label: string, auctionDate: string) => Promise<SellingPeriod>;
+  markPeriodSold: (id: string) => Promise<void>;
 }
 
 function fullRange(periods: SellingPeriod[]): DateRange {
@@ -219,107 +115,229 @@ function fullRange(periods: SellingPeriod[]): DateRange {
   return { from: dates[0]!, to: dates.at(-1)! };
 }
 
+function describe(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return 'Something went wrong talking to the API.';
+}
+
+/**
+ * The price facts for every auction, in one pass.
+ *
+ * The API exposes prices per selling period rather than in one bulk feed, so
+ * this fans out. The requests are independent and there are only ever a handful
+ * of auctions, so they go together rather than in sequence.
+ */
+async function fetchPriceFacts(periods: SellingPeriod[]) {
+  const perPeriod = await Promise.all(
+    periods.map(async (period) => {
+      const [ourPrices, bulkResult, externalResults] = await Promise.all([
+        api.prices.ourPrices(period.id),
+        api.prices.ourBulkResult(period.id),
+        api.prices.externalResults(period.id),
+      ]);
+      return { ourPrices, bulkResult, externalResults };
+    }),
+  );
+
+  return {
+    ourItemPrices: perPeriod.flatMap((p) => p.ourPrices),
+    ourBulkResults: perPeriod
+      .map((p) => p.bulkResult)
+      .filter((r): r is OurBulkResult => r !== null),
+    externalFactoryResults: perPeriod.flatMap((p) => p.externalResults),
+  };
+}
+
+/**
+ * Bulk sets with their lines.
+ *
+ * `GET /bulk-sets` returns headers only — the lines are what every screen here
+ * actually needs, so each set is fetched in full. Bulk sets are a handful, and
+ * a set without its quantities cannot be edited or valued.
+ */
+async function fetchBulkSets(): Promise<BulkSetWithItems[]> {
+  const headers = await api.bulkSets.list();
+  return Promise.all(headers.map((header) => api.bulkSets.get(header.id)));
+}
+
 export const useTeaStore = create<TeaStoreState>((set, get) => ({
-  teaItems,
-  externalFactories,
-  sellingPeriods,
-  ourItemPrices,
-  ourBulkResults,
-  externalFactoryResults,
-  bulkSets,
-  range: fullRange(sellingPeriods),
+  teaItems: [],
+  externalFactories: [],
+  sellingPeriods: [],
+  ourItemPrices: [],
+  ourBulkResults: [],
+  externalFactoryResults: [],
+  bulkSets: [],
+  range: fullRange([]),
+
+  status: 'idle',
+  error: null,
+  saving: false,
+
+  load: async (options = {}) => {
+    const { status } = get();
+    if (!options.force && (status === 'loading' || status === 'ready')) return;
+
+    set({ status: 'loading', error: null });
+
+    try {
+      const [teaItems, externalFactories, sellingPeriods, bulkSets] = await Promise.all([
+        api.teaItems.list(),
+        api.externalFactories.list(),
+        api.sellingPeriods.list(),
+        fetchBulkSets(),
+      ]);
+
+      const facts = await fetchPriceFacts(sellingPeriods);
+
+      // Keep a range the user has already chosen; only widen to the full span
+      // on the first load, when there was nothing to choose from.
+      const previous = get();
+      const range =
+        previous.status === 'ready' ? previous.range : fullRange(sellingPeriods);
+
+      set({
+        teaItems,
+        externalFactories,
+        sellingPeriods,
+        bulkSets,
+        ...facts,
+        range,
+        status: 'ready',
+        error: null,
+      });
+    } catch (error) {
+      set({ status: 'error', error: describe(error) });
+    }
+  },
 
   setRange: (range) => set({ range }),
   resetRange: () => set({ range: fullRange(get().sellingPeriods) }),
 
-  recordOurPrices: (sellingPeriodId, entries) =>
-    set((state) => ({
-      ourItemPrices: [
-        ...state.ourItemPrices,
-        ...entries.map((entry, index) => ({
-          id: `oip-${Date.now()}-${index}`,
-          teaItemId: entry.teaItemId,
-          sellingPeriodId,
-          pricePerKg: entry.pricePerKg,
-          recordedAt: new Date().toISOString(),
-        })),
-      ],
-    })),
-
-  recordOurBulkResult: (sellingPeriodId, pricePerKg, bulkSetId = null) =>
-    set((state) => ({
-      ourBulkResults: [
-        ...state.ourBulkResults,
-        {
-          id: `obr-${Date.now()}`,
-          sellingPeriodId,
-          bulkSetId,
-          pricePerKg,
-          recordedAt: new Date().toISOString(),
-        },
-      ],
-    })),
-
-  recordExternalResults: (sellingPeriodId, entries) =>
-    set((state) => ({
-      externalFactoryResults: [
-        ...state.externalFactoryResults,
-        ...entries.map((entry, index) => ({
-          id: `efr-${Date.now()}-${index}`,
-          externalFactoryId: entry.externalFactoryId,
-          sellingPeriodId,
-          pricePerKg: entry.pricePerKg,
-          recordedAt: new Date().toISOString(),
-        })),
-      ],
-    })),
-
-  saveBulkSet: (input) => {
-    const existing = input.id ? get().bulkSets.find((b) => b.id === input.id) : undefined;
-
-    const bulkSet: BulkSet = {
-      id: existing?.id ?? `bs-${Date.now()}`,
-      reference: input.reference.trim(),
-      targetSellingPeriodId: input.targetSellingPeriodId,
-      status: existing?.status ?? 'pending',
-      notes: existing?.notes ?? null,
-      createdAt: existing?.createdAt ?? new Date().toISOString(),
-      items: input.items.filter((item) => item.quantityKg > 0),
-    };
-
-    set((state) => ({
-      bulkSets: existing
-        ? state.bulkSets.map((b) => (b.id === existing.id ? bulkSet : b))
-        : [bulkSet, ...state.bulkSets],
-    }));
-
-    return bulkSet;
+  recordOurPrices: async (sellingPeriodId, entries) => {
+    set({ saving: true });
+    try {
+      await api.prices.recordOurPrices(sellingPeriodId, entries);
+      const ourPrices = await api.prices.ourPrices(sellingPeriodId);
+      set((state) => ({
+        ourItemPrices: [
+          ...state.ourItemPrices.filter((p) => p.sellingPeriodId !== sellingPeriodId),
+          ...ourPrices,
+        ],
+      }));
+    } finally {
+      set({ saving: false });
+    }
   },
 
-  removeBulkSet: (id) =>
-    set((state) => ({ bulkSets: state.bulkSets.filter((b) => b.id !== id) })),
-
-  addSellingPeriod: (label, auctionDate) => {
-    const period: SellingPeriod = {
-      id: `sp-${Date.now()}`,
-      label: label.trim(),
-      auctionDate,
-      status: 'upcoming',
-    };
-    set((state) => ({
-      sellingPeriods: [...state.sellingPeriods, period].sort((a, b) =>
-        a.auctionDate.localeCompare(b.auctionDate),
-      ),
-    }));
-    return period;
+  recordOurBulkResult: async (sellingPeriodId, pricePerKg, bulkSetId = null) => {
+    set({ saving: true });
+    try {
+      const recorded = await api.prices.recordOurBulkResult(sellingPeriodId, {
+        pricePerKg,
+        bulkSetId,
+      });
+      set((state) => ({
+        ourBulkResults: [
+          ...state.ourBulkResults.filter((r) => r.sellingPeriodId !== sellingPeriodId),
+          recorded,
+        ],
+      }));
+    } finally {
+      set({ saving: false });
+    }
   },
 
-  markPeriodSold: (id) =>
+  blendOurBulkResult: async (sellingPeriodId, bulkSetId = null) => {
+    set({ saving: true });
+    try {
+      const recorded = await api.prices.blendOurBulkResult(sellingPeriodId, { bulkSetId });
+      set((state) => ({
+        ourBulkResults: [
+          ...state.ourBulkResults.filter((r) => r.sellingPeriodId !== sellingPeriodId),
+          recorded,
+        ],
+      }));
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  recordExternalResults: async (sellingPeriodId, entries) => {
+    set({ saving: true });
+    try {
+      await api.prices.recordExternalResults(sellingPeriodId, entries);
+      const results = await api.prices.externalResults(sellingPeriodId);
+      set((state) => ({
+        externalFactoryResults: [
+          ...state.externalFactoryResults.filter((r) => r.sellingPeriodId !== sellingPeriodId),
+          ...results,
+        ],
+      }));
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  /**
+   * Create or update a set, then read it back.
+   *
+   * The API keeps the header and the lines apart — `PATCH` cannot move
+   * quantities and `PUT /items` cannot rename — so an edit is two calls. The
+   * set that comes back is the database's version, not the draft, so a rejected
+   * or adjusted save can never look like it succeeded.
+   */
+  saveBulkSet: async (input) => {
+    set({ saving: true });
+    try {
+      const saved = input.id
+        ? await (async () => {
+            await api.bulkSets.update(input.id!, {
+              reference: input.reference,
+              targetSellingPeriodId: input.targetSellingPeriodId,
+            });
+            return api.bulkSets.replaceItems(input.id!, input.items);
+          })()
+        : await api.bulkSets.create({
+            reference: input.reference,
+            targetSellingPeriodId: input.targetSellingPeriodId,
+            items: input.items,
+          });
+
+      set((state) => ({
+        bulkSets: state.bulkSets.some((b) => b.id === saved.id)
+          ? state.bulkSets.map((b) => (b.id === saved.id ? saved : b))
+          : [saved, ...state.bulkSets],
+      }));
+
+      return saved;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  addSellingPeriod: async (label, auctionDate) => {
+    set({ saving: true });
+    try {
+      const period = await api.sellingPeriods.create({ label, auctionDate });
+      set((state) => ({
+        sellingPeriods: [...state.sellingPeriods, period].sort((a, b) =>
+          a.auctionDate.localeCompare(b.auctionDate),
+        ),
+      }));
+      return period;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  markPeriodSold: async (id) => {
+    const updated = await api.sellingPeriods.setStatus(id, 'sold');
     set((state) => ({
-      sellingPeriods: state.sellingPeriods.map((p) =>
-        p.id === id ? { ...p, status: 'sold' as const } : p,
-      ),
-    })),
+      sellingPeriods: state.sellingPeriods.map((p) => (p.id === id ? updated : p)),
+    }));
+  },
 }));
 
 // ------------------------------------------------------------------ selectors

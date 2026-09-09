@@ -69,6 +69,7 @@ export default function AuctionResultsScreen() {
   const recordOurPrices = useTeaStore((s) => s.recordOurPrices);
   const recordOurBulkResult = useTeaStore((s) => s.recordOurBulkResult);
   const blendOurBulkResult = useTeaStore((s) => s.blendOurBulkResult);
+  const recordExternalResults = useTeaStore((s) => s.recordExternalResults);
   const markPeriodSold = useTeaStore((s) => s.markPeriodSold);
   const saving = useTeaStore((s) => s.saving);
 
@@ -96,6 +97,8 @@ export default function AuctionResultsScreen() {
 
   const [itemDrafts, setItemDrafts] = useState<Record<string, string>>({});
   const [bulkDraft, setBulkDraft] = useState('');
+  const [factoryDrafts, setFactoryDrafts] = useState<Record<string, string>>({});
+  const [factoryQuery, setFactoryQuery] = useState('');
   const [savedNotice, setSavedNotice] = useState<{
     text: string;
     tone: 'ok' | 'warn' | 'error';
@@ -108,11 +111,14 @@ export default function AuctionResultsScreen() {
   const itemValue = (id: string) =>
     itemDrafts[id] ?? (savedItemPrices.get(id) !== undefined ? String(savedItemPrices.get(id)) : '');
   const bulkValue = bulkDraft || (savedBulk !== null ? String(savedBulk) : '');
+  const factoryValue = (id: string) =>
+    factoryDrafts[id] ?? (savedExternal.get(id) !== undefined ? String(savedExternal.get(id)) : '');
 
   const switchPeriod = (id: string) => {
     setPeriodId(id);
     setItemDrafts({});
     setBulkDraft('');
+    setFactoryDrafts({});
     setSavedNotice(null);
     setBulkOverride(false);
   };
@@ -175,23 +181,44 @@ export default function AuctionResultsScreen() {
   // a line of its own pointing at nothing.
   const figuresSideBySide = width >= 700;
 
+  // Whatever is on screen for the other factories — drafts winning over what is
+  // on record, so the benchmark below moves as prices are typed.
+  const enteredExternal = new Map<string, number>();
+  for (const factory of externalFactories) {
+    const price = parsePrice(factoryValue(factory.id));
+    if (price !== null) enteredExternal.set(factory.id, price);
+  }
+
+  // Searching is by code, name or region — the three things printed on an
+  // auction report, so whichever one is to hand finds the factory.
+  const factoryNeedle = factoryQuery.trim().toLowerCase();
+  const matchingFactories =
+    factoryNeedle === ''
+      ? externalFactories
+      : externalFactories.filter((f) =>
+          `${f.code} ${f.name} ${f.region ?? ''}`.toLowerCase().includes(factoryNeedle),
+        );
+
   // Typed only when there is nothing to blend from, or the user took over.
   const typedBulk = parsePrice(bulkValue);
   const manualEntry = bulkOverride || bulkSet === null;
   const effectiveBulk = manualEntry ? typedBulk : blendedBulk;
 
-  // Live preview of how this auction compares, using whatever is entered now.
-  const preview = useMemo(() => {
-    const ours = effectiveBulk;
-    const theirs = marketAverage(
-      [...savedExternal].map(([externalFactoryId, pricePerKg]) => ({
-        externalFactoryId,
-        pricePerKg,
-      })),
-    );
-    return { ours, market: theirs, ...compare(ours, theirs.averagePricePerKg) };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveBulk, savedExternal]);
+  // Live preview of how this auction compares, using whatever is entered now —
+  // on both sides, so a factory price typed above moves the benchmark at once
+  // rather than only after a save. Flat, not weighted: their bulk weights are
+  // never published, so there is nothing to weight by.
+  const marketNow = marketAverage(
+    [...enteredExternal].map(([externalFactoryId, pricePerKg]) => ({
+      externalFactoryId,
+      pricePerKg,
+    })),
+  );
+  const preview = {
+    ours: effectiveBulk,
+    market: marketNow,
+    ...compare(effectiveBulk, marketNow.averagePricePerKg),
+  };
 
   const save = async () => {
     if (!period) return;
@@ -200,6 +227,12 @@ export default function AuctionResultsScreen() {
       .filter((m) => m.enteredPricePerKg !== null)
       .map((m) => ({ teaItemId: m.item.id, pricePerKg: m.enteredPricePerKg! }))
       .filter((e) => e.pricePerKg !== savedItemPrices.get(e.teaItemId));
+
+    // Only what actually moved. Re-saving an unchanged figure would append a
+    // correction that corrects nothing.
+    const factoryEntries = [...enteredExternal]
+      .map(([externalFactoryId, pricePerKg]) => ({ externalFactoryId, pricePerKg }))
+      .filter((e) => e.pricePerKg !== savedExternal.get(e.externalFactoryId));
 
     // A blend over part of the set is not the set's price. Until every required
     // grade has a figure, the item prices are still worth recording — the
@@ -224,13 +257,17 @@ export default function AuctionResultsScreen() {
         bulkRecorded = true;
       }
 
+      // Independent of our own figures, so recorded after them: nothing in the
+      // blend depends on what another factory fetched.
+      if (factoryEntries.length > 0) await recordExternalResults(period.id, factoryEntries);
+
       const outstanding = held
         ? ` The bulk price is on hold until ${missingRequired
             .map((m) => m.item.code)
             .join(', ')} ${missingRequired.length === 1 ? 'has' : 'have'} a price.`
         : '';
 
-      const changed = itemEntries.length + (bulkRecorded ? 1 : 0);
+      const changed = itemEntries.length + factoryEntries.length + (bulkRecorded ? 1 : 0);
       if (changed === 0) {
         setSavedNotice({
           text: `Nothing changed — no new entries recorded.${outstanding}`,
@@ -248,6 +285,7 @@ export default function AuctionResultsScreen() {
       });
       setItemDrafts({});
       setBulkDraft('');
+      setFactoryDrafts({});
     } catch (error) {
       setSavedNotice({
         text:
@@ -664,7 +702,7 @@ export default function AuctionResultsScreen() {
           )}
         </View>
 
-        {/* 3 — the market, recorded on its own tab */}
+        {/* 3 — the market: one figure per factory, typed here for this auction */}
         <View style={styles.sectionCard}>
           <SectionHeading
             icon={<MoneyIcon color="#B8860B" size={18} />}
@@ -672,34 +710,94 @@ export default function AuctionResultsScreen() {
             title="Other Factories' Bulk Prices"
             subtitle="One blended figure per factory, read from the published auction reports. They differ because each factory sold a different mix — and none of them report per tea item."
           />
-          <View style={styles.marketRecap}>
-            {externalFactories.length === 0 ? (
-              <Text style={styles.marketRecapEmpty}>No other factories on file yet.</Text>
-            ) : (
-              externalFactories.map((factory) => {
-                const price = savedExternal.get(factory.id) ?? null;
-                return (
-                  <View key={factory.id} style={styles.marketRecapRow}>
-                    <Text style={styles.marketRecapCode}>{factory.code}</Text>
-                    <Text style={styles.marketRecapName} numberOfLines={1}>
-                      {factory.name}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.marketRecapValue,
-                        price === null && styles.marketRecapMissing,
-                      ]}>
-                      {price === null ? 'not recorded' : `Rs. ${formatRs(price)}`}
-                    </Text>
-                  </View>
-                );
-              })
-            )}
-          </View>
+
+          {externalFactories.length === 0 ? (
+            <Text style={styles.marketRecapEmpty}>
+              No other factories on file yet. Add them on the Market tab, then their prices for
+              this auction can be typed here.
+            </Text>
+          ) : (
+            <>
+              <View style={styles.searchField}>
+                <TextInput
+                  style={styles.searchInput}
+                  value={factoryQuery}
+                  onChangeText={setFactoryQuery}
+                  placeholder="Search factory by code, name or region…"
+                  placeholderTextColor={Colors.textSecondary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {factoryQuery !== '' && (
+                  <Pressable style={styles.clearButton} onPress={() => setFactoryQuery('')}>
+                    <Text style={styles.clearButtonText}>Clear</Text>
+                  </Pressable>
+                )}
+              </View>
+
+              <Text style={styles.searchCount}>
+                {factoryNeedle === ''
+                  ? `${externalFactories.length} factor${externalFactories.length === 1 ? 'y' : 'ies'} on file`
+                  : `${matchingFactories.length} of ${externalFactories.length} match “${factoryQuery.trim()}”`}
+                {' · '}
+                {enteredExternal.size} priced for {period?.label ?? 'this auction'}
+              </Text>
+
+              {matchingFactories.length === 0 ? (
+                <Text style={styles.marketRecapEmpty}>
+                  No factory matches “{factoryQuery.trim()}”. Check the code, or add the factory on
+                  the Market tab — it needs a code and a name, which a search box cannot ask for.
+                </Text>
+              ) : (
+                <View style={styles.inputGrid}>
+                  {matchingFactories.map((factory) => {
+                    const onRecord = savedExternal.get(factory.id) ?? null;
+                    const entered = enteredExternal.get(factory.id) ?? null;
+                    return (
+                      <View key={factory.id} style={styles.inputCell}>
+                        <View style={styles.inputLabelRow}>
+                          <Text style={styles.inputCode}>{factory.code}</Text>
+                          {onRecord !== null && <Text style={styles.savedTag}>on record</Text>}
+                        </View>
+                        <Text style={styles.inputName} numberOfLines={1}>
+                          {factory.name}
+                          {factory.region ? ` · ${factory.region}` : ''}
+                        </Text>
+
+                        <View style={styles.inputWrap}>
+                          <Text style={styles.inputPrefix}>Rs.</Text>
+                          <TextInput
+                            style={styles.input}
+                            value={factoryValue(factory.id)}
+                            onChangeText={(text) =>
+                              setFactoryDrafts((prev) => ({ ...prev, [factory.id]: text }))
+                            }
+                            keyboardType="decimal-pad"
+                            placeholder="0.00"
+                            placeholderTextColor={Colors.textSecondary}
+                          />
+                          <Text style={styles.inputSuffix}>/kg</Text>
+                        </View>
+
+                        <Text style={styles.factoryHint}>
+                          {onRecord === null
+                            ? 'Nothing recorded for this auction yet.'
+                            : entered !== null && entered !== onRecord
+                              ? `Rs. ${formatRs(onRecord)} on file — saving records this as a correction.`
+                              : `Rs. ${formatRs(onRecord)} on file.`}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </>
+          )}
+
           <Text style={styles.marketRecapNote}>
-            These are entered on the Market tab, alongside each factory&rsquo;s own averages and
-            the benchmark they make. Shown here because the comparison below is measured against
-            them.
+            These make the market benchmark below — a flat average of the factories priced for this
+            auction, unweighted because their bulk weights are never published. The Market tab
+            holds the same figures over any date period, and is where a new factory is added.
           </Text>
         </View>
 
@@ -1015,26 +1113,26 @@ const styles = StyleSheet.create({
   blendNarrowed: { fontSize: 11, color: '#8A6D1F', lineHeight: 16, marginTop: 10 },
   blendTableNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
 
-  marketRecap: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-  },
-  marketRecapRow: {
+  searchField: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
     paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
   },
-  marketRecapCode: { fontSize: 13, fontWeight: '700', color: Colors.text, minWidth: 64 },
-  marketRecapName: { flex: 1, fontSize: 12, color: Colors.textSecondary },
-  marketRecapValue: { fontSize: 13, fontWeight: '700', color: '#B8860B' },
-  marketRecapMissing: { fontWeight: '400', color: Colors.textSecondary },
-  marketRecapEmpty: { fontSize: 12, color: Colors.textSecondary, padding: 12 },
+  searchInput: { flex: 1, minWidth: 0, paddingVertical: 10, fontSize: 14, color: Colors.text },
+  clearButton: { paddingHorizontal: 6, paddingVertical: 4 },
+  clearButtonText: { fontSize: 12, fontWeight: '600', color: Colors.primary },
+  searchCount: { fontSize: 11, color: Colors.textSecondary },
+  factoryHint: { fontSize: 11, color: Colors.textSecondary, lineHeight: 15 },
+  marketRecapEmpty: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    lineHeight: 18,
+    paddingVertical: 10,
+  },
   marketRecapNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   overrideToggle: {
     borderWidth: 1,

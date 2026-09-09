@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -18,17 +18,28 @@ import {
 } from '@/domain/averaging';
 import type { BulkSetItem } from '@/domain/types';
 import {
+  selectLatestPlannedBulkSet,
   selectMarketAverage,
   selectOurItemAverages,
+  selectPlanVersusOutcome,
   selectUpcomingPeriod,
   useTeaStore,
   valueBulkSetItems,
 } from '@/store/tea-store';
 
 /**
- * Preparing the next bulk set.
+ * Planning the next bulk set. Half of a two-step story.
  *
- * Type quantities, and the expected value updates live: each item priced at our
+ *   HERE   — choose the grades and the kilos, and see what that mix would be
+ *            worth per kg AT OUR HISTORICAL AVERAGES. A forecast, not a sale.
+ *   THERE  — Record Auction Results takes the very same grades and kilos and
+ *            re-prices them at what they actually fetched.
+ *
+ * Nothing about the mix changes between the two. The only difference is which
+ * price each grade is valued at, which is what makes planned and actual
+ * comparable at all — and why both screens weight through the same function.
+ *
+ * Type quantities and the expected value updates live: each item priced at our
  * own historical average, weighted by its share of the kilos, then compared
  * against the one market figure we have.
  *
@@ -47,9 +58,13 @@ export default function BulkSetScreen() {
   const saving = useTeaStore((s) => s.saving);
 
   const upcoming = selectUpcomingPeriod(state);
-  const editable = bulkSets.filter((b) => b.status !== 'sold');
+  // Newest first, so the pill row reads most-recent-plan to oldest regardless
+  // of how the list happens to be ordered in the cache.
+  const editable = bulkSets
+    .filter((b) => b.status !== 'sold')
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  const [selectedId, setSelectedId] = useState<string | null>(editable[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = bulkSets.find((b) => b.id === selectedId) ?? null;
 
   const [reference, setReference] = useState(selected?.reference ?? nextReference(bulkSets));
@@ -57,6 +72,32 @@ export default function BulkSetScreen() {
     seedQuantities(selected?.items ?? []),
   );
   const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null);
+
+  /*
+   * Open on the newest plan, once the cache has something to open on.
+   *
+   * This cannot be a useState initialiser: the store is filled from the API
+   * after the first render, so the initialiser only ever sees an empty list.
+   * It cannot be a plain "if nothing is selected" guard either — null is a
+   * legitimate state here, meaning the user pressed New set, and re-selecting
+   * behind them would make that button impossible to use. Hence a one-shot.
+   */
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (seeded.current || state.status !== 'ready') return;
+    seeded.current = true;
+
+    const latest = selectLatestPlannedBulkSet(state);
+    if (latest) {
+      setSelectedId(latest.id);
+      setReference(latest.reference);
+      setQuantities(seedQuantities(latest.items));
+    } else {
+      // Nothing to edit, but the reference still has to follow the sets that
+      // do exist, or a new set is proposed as BS-103 forever.
+      setReference(nextReference(state.bulkSets));
+    }
+  }, [state]);
 
   const switchSet = (id: string | null) => {
     const target = id ? bulkSets.find((b) => b.id === id) ?? null : null;
@@ -186,7 +227,7 @@ export default function BulkSetScreen() {
           </View>
           <View style={styles.summaryDivider} />
           <View style={styles.summaryBlock}>
-            <Text style={styles.summaryLabel}>EXPECTED AVG PER KG</Text>
+            <Text style={styles.summaryLabel}>PLANNED AVG PER KG</Text>
             <Text style={styles.summaryValue}>
               Rs. {formatRs(valuation.expectedPricePerKg)}
             </Text>
@@ -197,6 +238,7 @@ export default function BulkSetScreen() {
                 ? 'Enter quantities to value the set'
                 : `Rs. ${formatRs(valuation.totalValue, 0)} ÷ ${formatKg(valuation.pricedQuantityKg)} kg`}
             </Text>
+            <Text style={styles.summaryMeta}>at historical averages</Text>
           </View>
           <View style={styles.summaryDivider} />
           <View style={styles.summaryBlock}>
@@ -342,6 +384,16 @@ export default function BulkSetScreen() {
           </View>
         </View>
 
+        <View style={styles.planNote}>
+          <Text style={styles.planNoteTitle}>This is a plan, not a sale</Text>
+          <Text style={styles.planNoteText}>
+            Every grade here is valued at what it has averaged for us in the past, so the figure
+            above is what this mix would be worth if prices held. When the set actually sells, enter
+            the day&rsquo;s prices on Record Auction Results — the same grades and kilos are
+            re-priced there, and the two figures sit side by side.
+          </Text>
+        </View>
+
         <Pressable
           style={[styles.saveButton, saving && styles.saveButtonBusy]}
           disabled={saving}
@@ -359,25 +411,59 @@ export default function BulkSetScreen() {
         {bulkSets.some((b) => b.status === 'sold') && (
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>Sold Bulk Sets</Text>
+            <Text style={styles.sectionSubtitle}>
+              How earlier plans turned out. Each set is valued twice at the same kilos — at the
+              averages known before its auction, then at what its grades actually fetched there.
+            </Text>
             <View style={styles.table}>
               <View style={styles.tableHeader}>
                 <Text style={[styles.th, styles.colItem]}>Reference</Text>
-                <Text style={[styles.th, styles.colNum]}>Items</Text>
                 <Text style={[styles.th, styles.colNum]}>Total kg</Text>
-                <Text style={[styles.th, styles.colItem]}>Auction</Text>
+                <Text style={[styles.th, styles.colNum]}>Planned</Text>
+                <Text style={[styles.th, styles.colNum]}>Actual</Text>
+                <Text style={[styles.th, styles.colNum]}>Vs plan</Text>
               </View>
               {bulkSets
                 .filter((b) => b.status === 'sold')
                 .map((set) => {
                   const period = sellingPeriods.find((p) => p.id === set.targetSellingPeriodId);
                   const total = set.items.reduce((sum, i) => sum + i.quantityKg, 0);
+
+                  // Without an auction to sell into there is no outcome to show,
+                  // only the mix.
+                  const outcome = period
+                    ? selectPlanVersusOutcome(state, set.items, period.id)
+                    : null;
+
                   return (
                     <View key={set.id} style={styles.tableRow}>
-                      <Text style={[styles.tdBold, styles.colItem]}>{set.reference}</Text>
-                      <Text style={[styles.tdText, styles.colNum]}>{set.items.length}</Text>
+                      <View style={styles.colItem}>
+                        <Text style={styles.tdBold}>{set.reference}</Text>
+                        <Text style={styles.tdMuted}>
+                          {period ? period.label : 'no auction'} · {set.items.length} grades
+                        </Text>
+                      </View>
                       <Text style={[styles.tdText, styles.colNum]}>{formatKg(total)}</Text>
-                      <Text style={[styles.tdText, styles.colItem]}>
-                        {period ? period.label : '—'}
+                      <Text style={[styles.tdText, styles.colNum]}>
+                        {formatRs(outcome?.planned.expectedPricePerKg ?? null)}
+                      </Text>
+                      <Text style={[styles.tdBold, styles.colNum]}>
+                        {formatRs(outcome?.actual.expectedPricePerKg ?? null)}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.tdBold,
+                          styles.colNum,
+                          {
+                            color:
+                              outcome?.comparison.verdict === 'below'
+                                ? Colors.below
+                                : outcome?.comparison.verdict === 'unknown'
+                                  ? Colors.textSecondary
+                                  : Colors.above,
+                          },
+                        ]}>
+                        {formatSignedRs(outcome?.comparison.differencePerKg ?? null)}
                       </Text>
                     </View>
                   );
@@ -575,4 +661,15 @@ const styles = StyleSheet.create({
   saveButtonBusy: { opacity: 0.6 },
   saveButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   footNote: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center', lineHeight: 16 },
+
+  planNote: {
+    backgroundColor: Colors.primaryLight,
+    borderWidth: 1,
+    borderColor: '#CDE7CF',
+    borderRadius: 10,
+    padding: 14,
+    gap: 4,
+  },
+  planNoteTitle: { fontSize: 13, fontWeight: '700', color: Colors.primaryDark },
+  planNoteText: { fontSize: 12, color: '#3F6B42', lineHeight: 18 },
 });

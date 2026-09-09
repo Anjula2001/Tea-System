@@ -12,6 +12,7 @@ import { MoneyIcon, LeafIcon, ChartIcon, PlusIcon, ChevronRightIcon } from '@/co
 import { formatAuctionDate, formatKg, formatRs, formatSignedRs } from '@/domain/averaging';
 import {
   selectBulkSetValuation,
+  selectLatestPlannedBulkSet,
   selectMarketAverage,
   selectOurBulkAverage,
   selectOurItemAverages,
@@ -49,10 +50,9 @@ export default function DashboardScreen() {
 
   const lastSold = [...comparisons].reverse().find((c) => c.status === 'sold') ?? null;
 
-  const pendingSet =
-    state.bulkSets.find((b) => b.status === 'pending') ??
-    state.bulkSets.find((b) => b.status === 'draft') ??
-    null;
+  // The newest set still on the bench, whatever its status — a draft built
+  // today is a later plan than a pending set from last month.
+  const pendingSet = selectLatestPlannedBulkSet(state);
   const valuation = pendingSet ? selectBulkSetValuation(state, pendingSet.id, range) : null;
   const forward = valuation
     ? {
@@ -150,7 +150,7 @@ export default function DashboardScreen() {
             </View>
             <View style={styles.actionTextGroup}>
               <Text style={styles.actionTitle}>Prepare the Next Bulk Set</Text>
-              <Text style={styles.actionDesc}>Choose quantities and see the expected value</Text>
+              <Text style={styles.actionDesc}>Choose grades and kilos, see the planned value</Text>
             </View>
             <ChevronRightIcon color={Colors.textSecondary} size={16} />
           </Pressable>
@@ -166,7 +166,7 @@ export default function DashboardScreen() {
                 </Text>
                 <Text style={styles.sectionSubtitle}>
                   {formatKg(valuation.totalQuantityKg)} kg valued at our own item averages,
-                  quantity-weighted
+                  quantity-weighted. The actual figure follows once it sells.
                 </Text>
               </View>
               <Pressable onPress={() => router.push('/bulk-creation')}>
@@ -176,9 +176,9 @@ export default function DashboardScreen() {
 
             <View style={styles.expectedRow}>
               <View style={styles.expectedBlock}>
-                <Text style={styles.expectedLabel}>OUR EXPECTED VALUE</Text>
+                <Text style={styles.expectedLabel}>PLANNED AVG PER KG</Text>
                 <Text style={styles.expectedValue}>Rs. {formatRs(forward?.expected ?? null)}</Text>
-                <Text style={styles.expectedUnit}>per kg</Text>
+                <Text style={styles.expectedUnit}>at historical averages</Text>
               </View>
               <View style={styles.expectedDivider} />
               <View style={styles.expectedBlock}>

@@ -1,5 +1,13 @@
-import React, { useMemo, useState } from 'react';
-import { ScrollView, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ScrollView,
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  Pressable,
+  useWindowDimensions,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api';
@@ -20,6 +28,7 @@ import {
 import type { Comparison } from '@/domain/types';
 import {
   selectLatestBulkSet,
+  selectPlanVersusOutcome,
   selectExternalResultsForPeriod,
   selectOurBulkForPeriod,
   selectOurItemHistoryBeforePeriod,
@@ -50,6 +59,7 @@ import {
  */
 export default function AuctionResultsScreen() {
   const { ready, gate } = useLoadedStore();
+  const { width } = useWindowDimensions();
   const state = useTeaStore();
   const { teaItems, externalFactories, sellingPeriods } = state;
   const recordOurPrices = useTeaStore((s) => s.recordOurPrices);
@@ -64,8 +74,16 @@ export default function AuctionResultsScreen() {
     [sellingPeriods],
   );
 
-  const [periodId, setPeriodId] = useState(orderedPeriods[0]?.id ?? '');
+  const [periodId, setPeriodId] = useState('');
   const period = sellingPeriods.find((p) => p.id === periodId) ?? null;
+
+  // The cache fills after the first render, so the default auction is chosen
+  // when the data lands — a useState initialiser would only ever see an empty
+  // store and leave the screen with nothing selected. There is no legitimate
+  // "no auction" state here, so an empty id is always safe to replace.
+  useEffect(() => {
+    if (periodId === '' && orderedPeriods.length > 0) setPeriodId(orderedPeriods[0]!.id);
+  }, [periodId, orderedPeriods]);
 
   // Saved values for this auction seed the inputs, so the form opens showing
   // what is already on record rather than blank boxes.
@@ -139,8 +157,24 @@ export default function AuctionResultsScreen() {
       .map((m) => [m.item.id, m.enteredPricePerKg!]),
   );
 
-  const blend = bulkSet ? valueBulkSetAtPrices(state, bulkSet.items, enteredPrices) : null;
+  // The same set twice: at the averages the plan was built on, and at what the
+  // grades actually fetched today. Identical kilos on both sides, so the gap
+  // between them is price movement and nothing else.
+  const planVsActual = bulkSet
+    ? selectPlanVersusOutcome(state, bulkSet.items, periodId, enteredPrices)
+    : null;
+  const blend = planVsActual?.actual ?? null;
+  const plannedByItem = new Map(
+    planVsActual?.planned.lines.map((line) => [line.teaItemId, line.ourAveragePricePerKg]) ?? [],
+  );
   const blendedBulk = blend?.expectedPricePerKg ?? null;
+  const plannedBulk = planVsActual?.planned.expectedPricePerKg ?? null;
+  const againstPlan = planVsActual?.comparison ?? null;
+  const againstPlanPercent =
+    againstPlan?.differencePercent == null ? null : Math.abs(againstPlan.differencePercent);
+  // Below this the three figures stack, and an arrow between them would sit on
+  // a line of its own pointing at nothing.
+  const figuresSideBySide = width >= 700;
 
   // Typed only when there is nothing to blend from, or the user took over.
   const typedBulk = parsePrice(bulkValue);
@@ -430,43 +464,98 @@ export default function AuctionResultsScreen() {
           <SectionHeading
             icon={<ChartIcon color={Colors.primary} size={18} />}
             tint="#F0FDF4"
-            title="Our Bulk Set Price"
-            subtitle="One blended figure for the whole bulk set we sold. This is what compares directly against other factories."
+            title="Our Bulk Set Price — Planned vs Actual"
+            subtitle="The set you planned on Prepare Bulk Set, re-priced at what its grades actually fetched today. Same grades, same kilos — only the prices are new. The actual figure is what compares directly against other factories."
           />
 
           {bulkSet && blend ? (
             <>
+              {/*
+                The plan and the sale, side by side. Same grades, same kilos —
+                only the price source differs, so the third figure is price
+                movement rather than a change of mix.
+              */}
               <View style={styles.blendCard}>
-                <View style={styles.blendFigure}>
-                  <Text style={styles.blendLabel}>
-                    {manualEntry
-                      ? 'BLENDED FROM ITEM PRICES · NOT IN USE'
-                      : missingRequired.length > 0
-                        ? 'BLENDED FROM ITEM PRICES · INCOMPLETE'
-                        : 'BLENDED FROM ITEM PRICES'}
-                  </Text>
-                  <Text style={[styles.blendValue, manualEntry && styles.blendValueMuted]}>
-                    Rs. {formatRs(blendedBulk)}
-                    <Text style={styles.blendUnit}> /kg</Text>
-                  </Text>
-                  <Text style={styles.blendMeta}>
-                    {blendedBulk === null
-                      ? `Enter the item prices above and ${bulkSet.reference} blends them here.`
-                      : `Σ(kg × price) ÷ Σ(kg) over ${formatKg(blend.pricedQuantityKg)} of ${formatKg(blend.totalQuantityKg)} kg`}
-                  </Text>
-                  <Text style={styles.blendSource}>
-                    Mix from {bulkSet.reference} — the latest set built on Prepare Bulk Set,
-                    {' '}{formatKg(blend.totalQuantityKg)} kg across {bulkSet.items.length} grade
-                    {bulkSet.items.length === 1 ? '' : 's'}.
-                  </Text>
+                <View style={styles.blendGrid}>
+                  <View style={styles.blendCell}>
+                    <Text style={styles.blendLabel}>PLANNED</Text>
+                    <Text style={[styles.blendValue, styles.blendValuePlanned]}>
+                      Rs. {formatRs(plannedBulk)}
+                      <Text style={styles.blendUnit}> /kg</Text>
+                    </Text>
+                    <Text style={styles.blendMeta}>
+                      at our averages before this auction
+                    </Text>
+                  </View>
+
+                  {figuresSideBySide && (
+                    <View style={styles.blendArrow}>
+                      <Text style={styles.blendArrowText}>→</Text>
+                    </View>
+                  )}
+
+                  <View style={styles.blendCell}>
+                    <Text style={styles.blendLabel}>
+                      {manualEntry
+                        ? 'ACTUAL · NOT IN USE'
+                        : missingRequired.length > 0
+                          ? 'ACTUAL · INCOMPLETE'
+                          : 'ACTUAL'}
+                    </Text>
+                    <Text style={[styles.blendValue, manualEntry && styles.blendValueMuted]}>
+                      Rs. {formatRs(blendedBulk)}
+                      <Text style={styles.blendUnit}> /kg</Text>
+                    </Text>
+                    <Text style={styles.blendMeta}>
+                      {blendedBulk === null
+                        ? 'at this auction’s prices — enter them above'
+                        : `at this auction’s prices · ${formatKg(blend.pricedQuantityKg)} of ${formatKg(blend.totalQuantityKg)} kg priced`}
+                    </Text>
+                  </View>
+
+                  <View style={styles.blendCell}>
+                    <Text style={styles.blendLabel}>AGAINST PLAN</Text>
+                    <Text
+                      style={[
+                        styles.blendValue,
+                        {
+                          color:
+                            againstPlan?.verdict === 'below'
+                              ? Colors.below
+                              : againstPlan?.verdict === 'unknown' || !againstPlan
+                                ? Colors.textSecondary
+                                : Colors.above,
+                        },
+                      ]}>
+                      {formatSignedRs(againstPlan?.differencePerKg ?? null)}
+                    </Text>
+                    <Text style={styles.blendMeta}>
+                      {!againstPlan || againstPlan.verdict === 'unknown'
+                        ? 'needs both figures to compare'
+                        : againstPlan.verdict === 'equal'
+                          ? 'exactly the forecast'
+                          : `${formatPercent(againstPlanPercent)} ${
+                              againstPlan.verdict === 'below' ? 'under' : 'over'
+                            } the forecast`}
+                    </Text>
+                  </View>
                 </View>
-                <Pressable
-                  style={styles.overrideToggle}
-                  onPress={() => setBulkOverride((on) => !on)}>
-                  <Text style={styles.overrideToggleText}>
-                    {manualEntry ? 'Use blended figure' : 'Enter manually'}
+
+                <View style={styles.blendFooter}>
+                  <Text style={styles.blendSource}>
+                    Σ(kg × price) ÷ Σ(kg) over {bulkSet.reference} — the set planned on Prepare
+                    Bulk Set, {formatKg(blend.totalQuantityKg)} kg across {bulkSet.items.length}{' '}
+                    grade{bulkSet.items.length === 1 ? '' : 's'}. The mix is the plan’s; only the
+                    prices are new.
                   </Text>
-                </Pressable>
+                  <Pressable
+                    style={styles.overrideToggle}
+                    onPress={() => setBulkOverride((on) => !on)}>
+                    <Text style={styles.overrideToggleText}>
+                      {manualEntry ? 'Use blended figure' : 'Enter manually'}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
 
               {/* How each line reached that figure */}
@@ -474,11 +563,15 @@ export default function AuctionResultsScreen() {
                 <View style={styles.blendTableHeader}>
                   <Text style={[styles.blendTh, styles.blendColItem]}>Tea Item</Text>
                   <Text style={[styles.blendTh, styles.blendColNum]}>Quantity</Text>
-                  <Text style={[styles.blendTh, styles.blendColNum]}>Price /kg</Text>
+                  <Text style={[styles.blendTh, styles.blendColNum]}>Planned</Text>
+                  <Text style={[styles.blendTh, styles.blendColNum]}>Actual</Text>
                   <Text style={[styles.blendTh, styles.blendColNum]}>Share</Text>
                 </View>
                 {blend.lines.map((line) => {
                   const priced = line.ourAveragePricePerKg !== null;
+                  const planned = plannedByItem.get(line.teaItemId) ?? null;
+                  const move = compare(line.ourAveragePricePerKg, planned);
+
                   return (
                     <View key={line.teaItemId} style={styles.blendTableRow}>
                       <View style={styles.blendColItem}>
@@ -488,11 +581,18 @@ export default function AuctionResultsScreen() {
                       <Text style={[styles.blendTdText, styles.blendColNum]}>
                         {formatKg(line.quantityKg)} kg
                       </Text>
+                      <Text style={[styles.blendTdText, styles.blendColNum]}>
+                        {formatRs(planned)}
+                      </Text>
                       <Text
                         style={[
                           styles.blendTdBold,
                           styles.blendColNum,
                           !priced && styles.blendTdWaiting,
+                          priced &&
+                            move.verdict !== 'unknown' && {
+                              color: move.verdict === 'below' ? Colors.below : Colors.above,
+                            },
                         ]}>
                         {priced ? formatRs(line.ourAveragePricePerKg) : 'not entered'}
                       </Text>
@@ -871,11 +971,6 @@ const styles = StyleSheet.create({
   // The derived figure reads as a result, not a field: no input chrome, and the
   // weighting spelled out underneath so the number is never a black box.
   blendCard: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
     backgroundColor: '#F0FDF4',
     borderWidth: 1,
     borderColor: Colors.primary,
@@ -883,6 +978,23 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   blendFigure: { flexGrow: 1, flexBasis: 220, gap: 2 },
+  blendGrid: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 14 },
+  blendCell: { flexGrow: 1, flexBasis: 170, minWidth: 150, gap: 2 },
+  // The arrow only earns its place when the two figures sit on one line.
+  blendArrow: { alignSelf: 'center', paddingHorizontal: 2 },
+  blendArrowText: { fontSize: 18, color: Colors.textSecondary },
+  blendFooter: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#D7EBD9',
+  },
+  blendValuePlanned: { color: Colors.text },
   blendLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.6 },
   blendValue: { fontSize: 26, fontWeight: '700', color: Colors.primary },
   blendValueMuted: { color: Colors.textSecondary },
@@ -919,8 +1031,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
     gap: 8,
   },
-  blendColItem: { flex: 2.2 },
-  blendColNum: { flex: 1.2, textAlign: 'right' },
+  blendColItem: { flex: 2 },
+  blendColNum: { flex: 1.1, textAlign: 'right' },
   blendTdBold: { fontSize: 13, fontWeight: '600', color: Colors.text },
   blendTdText: { fontSize: 13, color: Colors.textSecondary },
   blendTdMuted: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },

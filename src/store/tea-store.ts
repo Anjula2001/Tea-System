@@ -584,6 +584,27 @@ export function selectOurItemHistoryBeforePeriod(
 }
 
 /**
+ * The set currently being planned: most recently built, not yet sold.
+ *
+ * Distinct from [selectLatestBulkSet] on purpose. That one answers "which mix
+ * did this auction sell?", so it must still see sold sets. This one answers
+ * "what are we working on now?", where a set that has already gone to auction
+ * is finished business.
+ *
+ * Ordered by `createdAt` rather than by status or by position in the array:
+ * a draft built today is a newer plan than a pending set from last month, and
+ * the array's order is only newest-first by accident of how the API lists them.
+ */
+export function selectLatestPlannedBulkSet(state: Snapshot): BulkSet | null {
+  return (
+    state.bulkSets
+      .filter((b) => b.status !== 'sold')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .at(-1) ?? null
+  );
+}
+
+/**
  * The most recently built bulk set — the one Prepare Bulk Set shows first.
  *
  * This is the mix the auction screen blends through, whichever auction is
@@ -623,6 +644,69 @@ export function valueBulkSetAtPrices(
       };
     }),
   );
+}
+
+/**
+ * The averages a plan for one auction would have been built on.
+ *
+ * Strictly the auctions before it, because that is all anyone knew when the set
+ * was planned. Valuing a plan at prices that include its own sale would grade
+ * the forecast against the answer sheet.
+ */
+export function selectPlannedPricesBeforePeriod(
+  state: Snapshot,
+  sellingPeriodId: string,
+): Map<string, number> {
+  const planned = new Map<string, number>();
+  for (const [teaItemId, history] of selectOurItemHistoryBeforePeriod(state, sellingPeriodId)) {
+    if (history.averagePricePerKg !== null) planned.set(teaItemId, history.averagePricePerKg);
+  }
+  return planned;
+}
+
+/**
+ * One bulk set, valued twice.
+ *
+ * The plan and the sale are the same tea: the same grades, the same kilos. The
+ * only thing that changes between them is which price each grade is valued at —
+ * our historical average when planning, what it actually fetched when sold. So
+ * the two figures are weighted identically and the gap between them is price
+ * movement alone, never a change of mix.
+ *
+ * `actualPrices` lets a screen pass what is currently typed rather than what is
+ * on record, so the comparison moves as the results are entered.
+ */
+export interface PlanVersusOutcome {
+  /** The set at the averages known before the auction — the forecast. */
+  planned: BulkSetValuation;
+  /** The same set at what its grades actually fetched. */
+  actual: BulkSetValuation;
+  /** actual − planned, per kg. */
+  comparison: Comparison;
+}
+
+export function selectPlanVersusOutcome(
+  state: Snapshot,
+  items: readonly BulkSetItem[],
+  sellingPeriodId: string,
+  actualPrices?: ReadonlyMap<string, number>,
+): PlanVersusOutcome {
+  const planned = valueBulkSetAtPrices(
+    state,
+    items,
+    selectPlannedPricesBeforePeriod(state, sellingPeriodId),
+  );
+  const actual = valueBulkSetAtPrices(
+    state,
+    items,
+    actualPrices ?? selectOurPricesForPeriod(state, sellingPeriodId),
+  );
+
+  return {
+    planned,
+    actual,
+    comparison: compare(actual.expectedPricePerKg, planned.expectedPricePerKg),
+  };
 }
 
 /** Current per-item prices recorded for one auction, corrections resolved. */

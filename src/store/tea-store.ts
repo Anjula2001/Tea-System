@@ -99,6 +99,15 @@ interface TeaStoreState {
     entries: { externalFactoryId: string; pricePerKg: number }[],
   ) => Promise<void>;
 
+  /** Add another factory to the benchmark. */
+  addExternalFactory: (input: {
+    code: string;
+    name: string;
+    region?: string | null;
+  }) => Promise<ExternalFactory>;
+  /** Retire a factory without deleting its history, or bring one back. */
+  setExternalFactoryActive: (id: string, active: boolean) => Promise<void>;
+
   saveBulkSet: (input: {
     id?: string;
     reference: string;
@@ -288,6 +297,28 @@ export const useTeaStore = create<TeaStoreState>((set, get) => ({
    * set that comes back is the database's version, not the draft, so a rejected
    * or adjusted save can never look like it succeeded.
    */
+  addExternalFactory: async (input) => {
+    set({ saving: true });
+    try {
+      const factory = await api.externalFactories.create(input);
+      set((state) => ({
+        externalFactories: [...state.externalFactories, factory].sort((a, b) =>
+          a.code.localeCompare(b.code),
+        ),
+      }));
+      return factory;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  setExternalFactoryActive: async (id, active) => {
+    const updated = await api.externalFactories.setActive(id, active);
+    set((state) => ({
+      externalFactories: state.externalFactories.map((f) => (f.id === id ? updated : f)),
+    }));
+  },
+
   saveBulkSet: async (input) => {
     set({ saving: true });
     try {
@@ -786,6 +817,120 @@ export function selectItemPriceBreakdown(
         points,
       };
     });
+}
+
+/**
+ * Every factory's published price over one date range, with its average — and
+ * the benchmark those prices make.
+ *
+ * The market average is a flat mean, Σ(price) ÷ number of factories. Unweighted
+ * of necessity: other factories never publish their bulk weights, so there is
+ * nothing to weight by. `perPeriod` is that sum and count auction by auction,
+ * which is the benchmark at its most literal.
+ */
+export interface FactoryPriceBreakdown {
+  externalFactoryId: string;
+  code: string;
+  name: string;
+  region: string | null;
+  averagePricePerKg: number | null;
+  periodsCounted: number;
+  lowestPricePerKg: number | null;
+  highestPricePerKg: number | null;
+  latestPricePerKg: number | null;
+  latestPeriodLabel: string | null;
+  latestAgainstAverage: Comparison;
+  points: ItemPricePoint[];
+}
+
+export interface MarketPeriodAverage {
+  sellingPeriodId: string;
+  label: string;
+  auctionDate: string;
+  averagePricePerKg: number | null;
+  factoriesCounted: number;
+  prices: { externalFactoryId: string; code: string; pricePerKg: number }[];
+}
+
+export function selectFactoryPriceBreakdown(
+  state: Snapshot,
+  range: DateRange,
+): FactoryPriceBreakdown[] {
+  const periods = periodsInRange(state, range);
+  const byId = new Map(periods.map((p) => [p.id, p]));
+
+  const current = latestPerKey(
+    state.externalFactoryResults.filter((r) => byId.has(r.sellingPeriodId)),
+    (r) => `${r.externalFactoryId}|${r.sellingPeriodId}`,
+  );
+
+  const pointsByFactory = new Map<string, ItemPricePoint[]>();
+  for (const row of current) {
+    const period = byId.get(row.sellingPeriodId)!;
+    const point: ItemPricePoint = {
+      sellingPeriodId: period.id,
+      label: period.label,
+      auctionDate: period.auctionDate,
+      pricePerKg: row.pricePerKg,
+    };
+    const bucket = pointsByFactory.get(row.externalFactoryId);
+    if (bucket) bucket.push(point);
+    else pointsByFactory.set(row.externalFactoryId, [point]);
+  }
+
+  return state.externalFactories.map((factory) => {
+    const points = (pointsByFactory.get(factory.id) ?? []).sort((a, b) =>
+      a.auctionDate.localeCompare(b.auctionDate),
+    );
+    const prices = points.map((p) => p.pricePerKg);
+    const summary = blendedAverage(prices);
+    const latest = points.at(-1) ?? null;
+
+    return {
+      externalFactoryId: factory.id,
+      code: factory.code,
+      name: factory.name,
+      region: factory.region,
+      averagePricePerKg: summary.averagePricePerKg,
+      periodsCounted: summary.periodsCounted,
+      lowestPricePerKg: prices.length > 0 ? Math.min(...prices) : null,
+      highestPricePerKg: prices.length > 0 ? Math.max(...prices) : null,
+      latestPricePerKg: latest?.pricePerKg ?? null,
+      latestPeriodLabel: latest?.label ?? null,
+      latestAgainstAverage: compare(latest?.pricePerKg ?? null, summary.averagePricePerKg),
+      points,
+    };
+  });
+}
+
+/** The benchmark auction by auction: Σ(price) ÷ factories that reported. */
+export function selectMarketPerPeriod(
+  state: Snapshot,
+  range: DateRange,
+): MarketPeriodAverage[] {
+  const periods = periodsInRange(state, range);
+  const codeById = new Map(state.externalFactories.map((f) => [f.id, f.code]));
+
+  return periods.map((period) => {
+    const rows = latestPerKey(
+      state.externalFactoryResults.filter((r) => r.sellingPeriodId === period.id),
+      (r) => r.externalFactoryId,
+    );
+    const summary = marketAverage(rows);
+
+    return {
+      sellingPeriodId: period.id,
+      label: period.label,
+      auctionDate: period.auctionDate,
+      averagePricePerKg: summary.averagePricePerKg,
+      factoriesCounted: summary.factoriesCounted,
+      prices: rows.map((r) => ({
+        externalFactoryId: r.externalFactoryId,
+        code: codeById.get(r.externalFactoryId) ?? '—',
+        pricePerKg: r.pricePerKg,
+      })),
+    };
+  });
 }
 
 /** Current per-item prices recorded for one auction, corrections resolved. */

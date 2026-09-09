@@ -25,6 +25,10 @@ export const api = {
 
   externalFactories: {
     list: () => http.get<ExternalFactory[]>('/external-factories'),
+    create: (body: { code: string; name: string; region?: string | null }) =>
+      http.post<ExternalFactory>('/external-factories', body),
+    setActive: (id: string, active: boolean) =>
+      http.patch<ExternalFactory>(`/external-factories/${id}/active`, { active }),
   },
 
   sellingPeriods: {

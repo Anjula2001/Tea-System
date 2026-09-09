@@ -26,6 +26,7 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
     { name: 'price-input', label: 'Auction Results', icon: MoneyIcon },
     { name: 'bulk-creation', label: 'Bulk Sets', icon: PlusIcon },
     { name: 'item-averages', label: 'Item Prices', icon: WalletIcon },
+    { name: 'market', label: 'Market', icon: MoneyIcon },
     { name: 'reports', label: 'History', icon: ChartIcon },
   ];
 
@@ -122,6 +123,7 @@ export default function DashboardLayout() {
       <Tabs.Screen name="price-input" options={{ title: 'Auction Results' }} />
       <Tabs.Screen name="bulk-creation" options={{ title: 'Bulk Sets' }} />
       <Tabs.Screen name="item-averages" options={{ title: 'Item Prices' }} />
+      <Tabs.Screen name="market" options={{ title: 'Market' }} />
       <Tabs.Screen name="reports" options={{ title: 'History' }} />
     </Tabs>
   );

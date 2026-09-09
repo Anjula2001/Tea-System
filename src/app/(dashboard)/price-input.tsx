@@ -65,7 +65,6 @@ export default function AuctionResultsScreen() {
   const recordOurPrices = useTeaStore((s) => s.recordOurPrices);
   const recordOurBulkResult = useTeaStore((s) => s.recordOurBulkResult);
   const blendOurBulkResult = useTeaStore((s) => s.blendOurBulkResult);
-  const recordExternalResults = useTeaStore((s) => s.recordExternalResults);
   const markPeriodSold = useTeaStore((s) => s.markPeriodSold);
   const saving = useTeaStore((s) => s.saving);
 
@@ -93,7 +92,6 @@ export default function AuctionResultsScreen() {
 
   const [itemDrafts, setItemDrafts] = useState<Record<string, string>>({});
   const [bulkDraft, setBulkDraft] = useState('');
-  const [externalDrafts, setExternalDrafts] = useState<Record<string, string>>({});
   const [savedNotice, setSavedNotice] = useState<{
     text: string;
     tone: 'ok' | 'warn' | 'error';
@@ -105,15 +103,12 @@ export default function AuctionResultsScreen() {
 
   const itemValue = (id: string) =>
     itemDrafts[id] ?? (savedItemPrices.get(id) !== undefined ? String(savedItemPrices.get(id)) : '');
-  const externalValue = (id: string) =>
-    externalDrafts[id] ?? (savedExternal.get(id) !== undefined ? String(savedExternal.get(id)) : '');
   const bulkValue = bulkDraft || (savedBulk !== null ? String(savedBulk) : '');
 
   const switchPeriod = (id: string) => {
     setPeriodId(id);
     setItemDrafts({});
     setBulkDraft('');
-    setExternalDrafts({});
     setSavedNotice(null);
     setBulkOverride(false);
   };
@@ -185,16 +180,14 @@ export default function AuctionResultsScreen() {
   const preview = useMemo(() => {
     const ours = effectiveBulk;
     const theirs = marketAverage(
-      externalFactories
-        .map((factory) => ({
-          externalFactoryId: factory.id,
-          pricePerKg: parsePrice(externalValue(factory.id)),
-        }))
-        .filter((r): r is { externalFactoryId: string; pricePerKg: number } => r.pricePerKg !== null),
+      [...savedExternal].map(([externalFactoryId, pricePerKg]) => ({
+        externalFactoryId,
+        pricePerKg,
+      })),
     );
     return { ours, market: theirs, ...compare(ours, theirs.averagePricePerKg) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveBulk, externalDrafts, savedExternal, externalFactories]);
+  }, [effectiveBulk, savedExternal]);
 
   const save = async () => {
     if (!period) return;
@@ -203,11 +196,6 @@ export default function AuctionResultsScreen() {
       .filter((m) => m.enteredPricePerKg !== null)
       .map((m) => ({ teaItemId: m.item.id, pricePerKg: m.enteredPricePerKg! }))
       .filter((e) => e.pricePerKg !== savedItemPrices.get(e.teaItemId));
-
-    const externalEntries = externalFactories
-      .map((f) => ({ externalFactoryId: f.id, pricePerKg: parsePrice(externalValue(f.id)) }))
-      .filter((e): e is { externalFactoryId: string; pricePerKg: number } => e.pricePerKg !== null)
-      .filter((e) => e.pricePerKg !== savedExternal.get(e.externalFactoryId));
 
     // A blend over part of the set is not the set's price. Until every required
     // grade has a figure, the item prices are still worth recording — the
@@ -218,7 +206,6 @@ export default function AuctionResultsScreen() {
       // Item prices first: the backend derives the blend from what it holds, so
       // it has to hold this auction's prices before it can be asked.
       if (itemEntries.length > 0) await recordOurPrices(period.id, itemEntries);
-      if (externalEntries.length > 0) await recordExternalResults(period.id, externalEntries);
 
       let bulkRecorded = false;
       if (manualEntry) {
@@ -239,7 +226,7 @@ export default function AuctionResultsScreen() {
             .join(', ')} ${missingRequired.length === 1 ? 'has' : 'have'} a price.`
         : '';
 
-      const changed = itemEntries.length + externalEntries.length + (bulkRecorded ? 1 : 0);
+      const changed = itemEntries.length + (bulkRecorded ? 1 : 0);
       if (changed === 0) {
         setSavedNotice({
           text: `Nothing changed — no new entries recorded.${outstanding}`,
@@ -257,7 +244,6 @@ export default function AuctionResultsScreen() {
       });
       setItemDrafts({});
       setBulkDraft('');
-      setExternalDrafts({});
     } catch (error) {
       setSavedNotice({
         text:
@@ -674,7 +660,7 @@ export default function AuctionResultsScreen() {
           )}
         </View>
 
-        {/* 3 — other factories */}
+        {/* 3 — the market, recorded on its own tab */}
         <View style={styles.sectionCard}>
           <SectionHeading
             icon={<MoneyIcon color="#B8860B" size={18} />}
@@ -682,34 +668,35 @@ export default function AuctionResultsScreen() {
             title="Other Factories' Bulk Prices"
             subtitle="One blended figure per factory, read from the published auction reports. They differ because each factory sold a different mix — and none of them report per tea item."
           />
-          <View style={styles.inputGrid}>
-            {externalFactories.map((factory) => (
-              <View key={factory.id} style={styles.inputCell}>
-                <View style={styles.inputLabelRow}>
-                  <Text style={styles.inputCode}>{factory.code}</Text>
-                  {savedExternal.has(factory.id) && <Text style={styles.savedTag}>on record</Text>}
-                </View>
-                <Text style={styles.inputName}>
-                  {factory.name}
-                  {factory.region ? ` · ${factory.region}` : ''}
-                </Text>
-                <View style={styles.inputWrap}>
-                  <Text style={styles.inputPrefix}>Rs.</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={externalValue(factory.id)}
-                    onChangeText={(text) =>
-                      setExternalDrafts((prev) => ({ ...prev, [factory.id]: text }))
-                    }
-                    keyboardType="decimal-pad"
-                    placeholder="0.00"
-                    placeholderTextColor={Colors.textSecondary}
-                  />
-                  <Text style={styles.inputSuffix}>/kg</Text>
-                </View>
-              </View>
-            ))}
+          <View style={styles.marketRecap}>
+            {externalFactories.length === 0 ? (
+              <Text style={styles.marketRecapEmpty}>No other factories on file yet.</Text>
+            ) : (
+              externalFactories.map((factory) => {
+                const price = savedExternal.get(factory.id) ?? null;
+                return (
+                  <View key={factory.id} style={styles.marketRecapRow}>
+                    <Text style={styles.marketRecapCode}>{factory.code}</Text>
+                    <Text style={styles.marketRecapName} numberOfLines={1}>
+                      {factory.name}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.marketRecapValue,
+                        price === null && styles.marketRecapMissing,
+                      ]}>
+                      {price === null ? 'not recorded' : `Rs. ${formatRs(price)}`}
+                    </Text>
+                  </View>
+                );
+              })
+            )}
           </View>
+          <Text style={styles.marketRecapNote}>
+            These are entered on the Market tab, alongside each factory&rsquo;s own averages and
+            the benchmark they make. Shown here because the comparison below is measured against
+            them.
+          </Text>
         </View>
 
         {/* Live comparison for this auction */}
@@ -1023,6 +1010,28 @@ const styles = StyleSheet.create({
   blendSource: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16, fontStyle: 'italic' },
   blendNarrowed: { fontSize: 11, color: '#8A6D1F', lineHeight: 16, marginTop: 10 },
   blendTableNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
+
+  marketRecap: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  marketRecapRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  marketRecapCode: { fontSize: 13, fontWeight: '700', color: Colors.text, minWidth: 64 },
+  marketRecapName: { flex: 1, fontSize: 12, color: Colors.textSecondary },
+  marketRecapValue: { fontSize: 13, fontWeight: '700', color: '#B8860B' },
+  marketRecapMissing: { fontWeight: '400', color: Colors.textSecondary },
+  marketRecapEmpty: { fontSize: 12, color: Colors.textSecondary, padding: 12 },
+  marketRecapNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   overrideToggle: {
     borderWidth: 1,
     borderColor: Colors.primary,

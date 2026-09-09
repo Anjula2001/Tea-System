@@ -701,6 +701,93 @@ export function selectPlanVersusOutcome(
   };
 }
 
+/**
+ * Every grade's price record over one date range, with its average.
+ *
+ * The average is the plain mean of the auctions in range — one price per
+ * auction, corrections already resolved — which is the same rule the planning
+ * screen values a bulk set at. The per-auction prices ride along so a figure
+ * can be checked against the sales it came from rather than taken on trust.
+ */
+export interface ItemPricePoint {
+  sellingPeriodId: string;
+  label: string;
+  auctionDate: string;
+  pricePerKg: number;
+}
+
+export interface ItemPriceBreakdown {
+  teaItemId: string;
+  teaItemCode: string;
+  teaItemName: string;
+  category: string | null;
+  averagePricePerKg: number | null;
+  /** How many auctions in range the average is drawn from. */
+  periodsCounted: number;
+  lowestPricePerKg: number | null;
+  highestPricePerKg: number | null;
+  /** The most recent price in range, and the auction it came from. */
+  latestPricePerKg: number | null;
+  latestPeriodLabel: string | null;
+  /** Latest against the range average — where this grade is trending. */
+  latestAgainstAverage: Comparison;
+  /** Oldest first, so a row reads left to right as time passes. */
+  points: ItemPricePoint[];
+}
+
+export function selectItemPriceBreakdown(
+  state: Snapshot,
+  range: DateRange,
+): ItemPriceBreakdown[] {
+  const periods = periodsInRange(state, range);
+  const byId = new Map(periods.map((p) => [p.id, p]));
+
+  const current = latestPerKey(
+    state.ourItemPrices.filter((p) => byId.has(p.sellingPeriodId)),
+    (p) => `${p.teaItemId}|${p.sellingPeriodId}`,
+  );
+
+  const pointsByItem = new Map<string, ItemPricePoint[]>();
+  for (const price of current) {
+    const period = byId.get(price.sellingPeriodId)!;
+    const point: ItemPricePoint = {
+      sellingPeriodId: period.id,
+      label: period.label,
+      auctionDate: period.auctionDate,
+      pricePerKg: price.pricePerKg,
+    };
+    const bucket = pointsByItem.get(price.teaItemId);
+    if (bucket) bucket.push(point);
+    else pointsByItem.set(price.teaItemId, [point]);
+  }
+
+  return state.teaItems
+    .filter((item) => item.active)
+    .map((item) => {
+      const points = (pointsByItem.get(item.id) ?? []).sort((a, b) =>
+        a.auctionDate.localeCompare(b.auctionDate),
+      );
+      const prices = points.map((p) => p.pricePerKg);
+      const summary = blendedAverage(prices);
+      const latest = points.at(-1) ?? null;
+
+      return {
+        teaItemId: item.id,
+        teaItemCode: item.code,
+        teaItemName: item.name,
+        category: item.category,
+        averagePricePerKg: summary.averagePricePerKg,
+        periodsCounted: summary.periodsCounted,
+        lowestPricePerKg: prices.length > 0 ? Math.min(...prices) : null,
+        highestPricePerKg: prices.length > 0 ? Math.max(...prices) : null,
+        latestPricePerKg: latest?.pricePerKg ?? null,
+        latestPeriodLabel: latest?.label ?? null,
+        latestAgainstAverage: compare(latest?.pricePerKg ?? null, summary.averagePricePerKg),
+        points,
+      };
+    });
+}
+
 /** Current per-item prices recorded for one auction, corrections resolved. */
 export function selectOurPricesForPeriod(
   state: Snapshot,

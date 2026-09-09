@@ -2,7 +2,7 @@ import { Tabs } from 'expo-router';
 import React from 'react';
 import { View, Text, StyleSheet, Pressable, useWindowDimensions, Platform } from 'react-native';
 import { Colors } from '@/constants/colors';
-import { HomeIcon, MoneyIcon, PlusIcon, ChartIcon, LeafIcon } from '@/components/ui-icons';
+import { HomeIcon, MoneyIcon, PlusIcon, ChartIcon, LeafIcon, WalletIcon } from '@/components/ui-icons';
 import { selectUpcomingPeriod, useTeaStore } from '@/store/tea-store';
 
 interface CustomTabBarProps {
@@ -25,6 +25,7 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
     { name: 'index', label: 'Dashboard', icon: HomeIcon },
     { name: 'price-input', label: 'Auction Results', icon: MoneyIcon },
     { name: 'bulk-creation', label: 'Bulk Sets', icon: PlusIcon },
+    { name: 'item-averages', label: 'Item Prices', icon: WalletIcon },
     { name: 'reports', label: 'History', icon: ChartIcon },
   ];
 
@@ -120,6 +121,7 @@ export default function DashboardLayout() {
       <Tabs.Screen name="index" options={{ title: 'Dashboard' }} />
       <Tabs.Screen name="price-input" options={{ title: 'Auction Results' }} />
       <Tabs.Screen name="bulk-creation" options={{ title: 'Bulk Sets' }} />
+      <Tabs.Screen name="item-averages" options={{ title: 'Item Prices' }} />
       <Tabs.Screen name="reports" options={{ title: 'History' }} />
     </Tabs>
   );

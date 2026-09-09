@@ -647,65 +647,57 @@ export function valueBulkSetAtPrices(
 }
 
 /**
- * The averages a plan for one auction would have been built on.
- *
- * Strictly the auctions before it, because that is all anyone knew when the set
- * was planned. Valuing a plan at prices that include its own sale would grade
- * the forecast against the answer sheet.
- */
-export function selectPlannedPricesBeforePeriod(
-  state: Snapshot,
-  sellingPeriodId: string,
-): Map<string, number> {
-  const planned = new Map<string, number>();
-  for (const [teaItemId, history] of selectOurItemHistoryBeforePeriod(state, sellingPeriodId)) {
-    if (history.averagePricePerKg !== null) planned.set(teaItemId, history.averagePricePerKg);
-  }
-  return planned;
-}
-
-/**
  * One bulk set, valued twice.
  *
- * The plan and the sale are the same tea: the same grades, the same kilos. The
- * only thing that changes between them is which price each grade is valued at —
- * our historical average when planning, what it actually fetched when sold. So
- * the two figures are weighted identically and the gap between them is price
- * movement alone, never a change of mix.
+ * PLANNED is the plan — the very figure Prepare Bulk Set shows for this set:
+ * every grade at our own historical average, weighted by the set's kilos. It
+ * goes through `valueBulkSetItems` with the same range that screen uses, so the
+ * two screens compute one number by one route and cannot drift apart.
  *
- * `actualPrices` lets a screen pass what is currently typed rather than what is
- * on record, so the comparison moves as the results are entered.
+ * ACTUAL is that same set after it sold, each grade at the price it fetched.
+ * Same grades, same kilos — only the price source changes.
+ *
+ * The difference between them is offered only when BOTH sides cover the whole
+ * set. A forecast over 1,000 kg set against a sale over 650 kg would report the
+ * missing 350 kg as a price movement, so until every grade is both priced and
+ * forecastable the verdict is 'unknown' rather than a number that looks whole.
  */
 export interface PlanVersusOutcome {
-  /** The set at the averages known before the auction — the forecast. */
+  /** The set at our historical averages — what Prepare Bulk Set shows. */
   planned: BulkSetValuation;
   /** The same set at what its grades actually fetched. */
   actual: BulkSetValuation;
-  /** actual − planned, per kg. */
+  /** actual − planned. 'unknown' unless both sides cover every grade. */
   comparison: Comparison;
+  /** True when both sides price every kilo, so the difference means something. */
+  comparable: boolean;
 }
 
 export function selectPlanVersusOutcome(
   state: Snapshot,
   items: readonly BulkSetItem[],
   sellingPeriodId: string,
+  range: DateRange,
   actualPrices?: ReadonlyMap<string, number>,
 ): PlanVersusOutcome {
-  const planned = valueBulkSetAtPrices(
-    state,
-    items,
-    selectPlannedPricesBeforePeriod(state, sellingPeriodId),
-  );
+  const planned = valueBulkSetItems(state, items, range);
   const actual = valueBulkSetAtPrices(
     state,
     items,
     actualPrices ?? selectOurPricesForPeriod(state, sellingPeriodId),
   );
 
+  const whole = (v: BulkSetValuation) =>
+    v.totalQuantityKg > 0 && v.pricedQuantityKg === v.totalQuantityKg;
+  const comparable = whole(planned) && whole(actual);
+
   return {
     planned,
     actual,
-    comparison: compare(actual.expectedPricePerKg, planned.expectedPricePerKg),
+    comparison: comparable
+      ? compare(actual.expectedPricePerKg, planned.expectedPricePerKg)
+      : { differencePerKg: null, differencePercent: null, verdict: 'unknown' },
+    comparable,
   };
 }
 

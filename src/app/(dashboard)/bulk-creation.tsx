@@ -432,7 +432,7 @@ export default function BulkSetScreen() {
                   // Without an auction to sell into there is no outcome to show,
                   // only the mix.
                   const outcome = period
-                    ? selectPlanVersusOutcome(state, set.items, period.id)
+                    ? selectPlanVersusOutcome(state, set.items, period.id, range)
                     : null;
 
                   return (

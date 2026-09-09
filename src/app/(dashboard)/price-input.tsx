@@ -161,7 +161,7 @@ export default function AuctionResultsScreen() {
   // grades actually fetched today. Identical kilos on both sides, so the gap
   // between them is price movement and nothing else.
   const planVsActual = bulkSet
-    ? selectPlanVersusOutcome(state, bulkSet.items, periodId, enteredPrices)
+    ? selectPlanVersusOutcome(state, bulkSet.items, periodId, state.range, enteredPrices)
     : null;
   const blend = planVsActual?.actual ?? null;
   const plannedByItem = new Map(
@@ -315,7 +315,8 @@ export default function AuctionResultsScreen() {
           <View style={styles.pastBlock}>
             <View style={styles.pastLine}>
               <Text style={styles.pastLabel}>
-                Avg of {past.periodsCounted} auction{past.periodsCounted === 1 ? '' : 's'}
+                Avg of {past.periodsCounted} earlier auction
+                {past.periodsCounted === 1 ? '' : 's'}
               </Text>
               <Text style={styles.pastValue}>Rs. {formatRs(past.averagePricePerKg)}</Text>
             </View>
@@ -484,7 +485,8 @@ export default function AuctionResultsScreen() {
                       <Text style={styles.blendUnit}> /kg</Text>
                     </Text>
                     <Text style={styles.blendMeta}>
-                      at our averages before this auction
+                      at our item averages — the figure Prepare Bulk Set shows for{' '}
+                      {bulkSet.reference}
                     </Text>
                   </View>
 
@@ -540,6 +542,16 @@ export default function AuctionResultsScreen() {
                     </Text>
                   </View>
                 </View>
+
+                {planVsActual && !planVsActual.comparable && (
+                  <Text style={styles.blendNarrowed}>
+                    {planVsActual.planned.unpricedTeaItemCodes.length > 0
+                      ? `${planVsActual.planned.unpricedTeaItemCodes.join(', ')} ha${
+                          planVsActual.planned.unpricedTeaItemCodes.length === 1 ? 's' : 've'
+                        } no price history, so the plan cannot cover the whole set and the two figures are not yet comparable.`
+                      : 'The two figures compare once every grade in the set has a price for this auction — until then they cover different kilos.'}
+                  </Text>
+                )}
 
                 <View style={styles.blendFooter}>
                   <Text style={styles.blendSource}>
@@ -603,6 +615,14 @@ export default function AuctionResultsScreen() {
                   );
                 })}
               </View>
+
+              <Text style={styles.blendTableNote}>
+                Planned prices here are the plan&rsquo;s own — our item averages across the
+                selected range, exactly as Prepare Bulk Set values them. The per-grade averages in
+                the section above stop short of this auction instead, because they exist to judge
+                today&rsquo;s price against earlier weeks. The two answer different questions, so
+                they can differ.
+              </Text>
 
               {blend.unpricedTeaItemCodes.length > 0 && (
                 <View style={styles.blendWarning}>
@@ -787,10 +807,10 @@ function MovementChip({ comparison }: { comparison: Comparison }) {
     comparison.verdict === 'unknown'
       ? 'Enter a price to compare'
       : comparison.verdict === 'equal'
-        ? '= Same as average'
+        ? '= Same as earlier avg'
         : `${palette.mark} ${formatSignedRs(comparison.differencePerKg)} · ${formatPercent(
             comparison.differencePercent === null ? null : Math.abs(comparison.differencePercent),
-          )} vs avg`;
+          )} vs earlier avg`;
 
   return (
     <View style={[styles.movementChip, { backgroundColor: palette.bg }]}>
@@ -1001,6 +1021,8 @@ const styles = StyleSheet.create({
   blendUnit: { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
   blendMeta: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   blendSource: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16, fontStyle: 'italic' },
+  blendNarrowed: { fontSize: 11, color: '#8A6D1F', lineHeight: 16, marginTop: 10 },
+  blendTableNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   overrideToggle: {
     borderWidth: 1,
     borderColor: Colors.primary,

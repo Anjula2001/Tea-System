@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { ScrollView, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -26,12 +27,10 @@ import { periodsInRange, selectItemPriceBreakdown, useTeaStore } from '@/store/t
  */
 export default function ItemAveragesScreen() {
   const { ready, gate } = useLoadedStore();
+  const router = useRouter();
   const state = useTeaStore();
   const { sellingPeriods } = state;
   const addTeaItem = useTeaStore((s) => s.addTeaItem);
-  const updateTeaItem = useTeaStore((s) => s.updateTeaItem);
-  const removeTeaItem = useTeaStore((s) => s.removeTeaItem);
-  const setTeaItemActive = useTeaStore((s) => s.setTeaItemActive);
   const saving = useTeaStore((s) => s.saving);
 
   const sorted = useMemo(
@@ -52,7 +51,6 @@ export default function ItemAveragesScreen() {
   const [fromDraft, setFromDraft] = useState('');
   const [toDraft, setToDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
 
   const applied = range ?? bounds;
   const fromValue = fromDraft || applied.from;
@@ -63,7 +61,6 @@ export default function ItemAveragesScreen() {
     setFromDraft(next.from);
     setToDraft(next.to);
     setError(null);
-    setExpanded(null);
   };
 
   const applyTyped = () => {
@@ -103,8 +100,6 @@ export default function ItemAveragesScreen() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'retired'>('all');
   const [draft, setDraft] = useState({ code: '', name: '', category: '' });
-  const [edit, setEdit] = useState<{ code: string; name: string; category: string } | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const report = (error: unknown, verb: string) =>
     setNotice({
@@ -115,15 +110,6 @@ export default function ItemAveragesScreen() {
       tone: 'error',
     });
 
-  const openRow = (teaItemId: string | null, row?: { teaItemCode: string; teaItemName: string; category: string | null }) => {
-    setExpanded(teaItemId);
-    setConfirmDelete(null);
-    setEdit(
-      teaItemId && row
-        ? { code: row.teaItemCode, name: row.teaItemName, category: row.category ?? '' }
-        : null,
-    );
-  };
 
   const addGrade = async () => {
     if (draft.code.trim() === '' || draft.name.trim() === '') {
@@ -144,48 +130,8 @@ export default function ItemAveragesScreen() {
     }
   };
 
-  const saveEdit = async (teaItemId: string) => {
-    if (!edit) return;
-    if (edit.code.trim() === '' || edit.name.trim() === '') {
-      setNotice({ text: 'A grade needs both a code and a name.', tone: 'error' });
-      return;
-    }
-    try {
-      const saved = await updateTeaItem(teaItemId, {
-        code: edit.code.trim(),
-        name: edit.name.trim(),
-        category: edit.category.trim() === '' ? null : edit.category.trim(),
-      });
-      setNotice({ text: `Saved ${saved.code} — ${saved.name}.`, tone: 'ok' });
-    } catch (error) {
-      report(error, 'Not saved');
-    }
-  };
 
-  const toggleActive = async (teaItemId: string, code: string, active: boolean) => {
-    try {
-      await setTeaItemActive(teaItemId, active);
-      setNotice({
-        text: active
-          ? `${code} is active again and will appear on the entry screens.`
-          : `${code} retired. Its history stays on file; it just will not be offered for new prices or bulk sets.`,
-        tone: 'ok',
-      });
-    } catch (error) {
-      report(error, 'Not changed');
-    }
-  };
 
-  const deleteGrade = async (teaItemId: string, code: string) => {
-    try {
-      await removeTeaItem(teaItemId);
-      setExpanded(null);
-      setConfirmDelete(null);
-      setNotice({ text: `Deleted ${code}.`, tone: 'ok' });
-    } catch (error) {
-      report(error, 'Not deleted');
-    }
-  };
 
   const breakdown = selectItemPriceBreakdown(state, applied);
   const periods = periodsInRange(state, applied);
@@ -383,12 +329,7 @@ export default function ItemAveragesScreen() {
               <TextInput
                 style={styles.searchInput}
                 value={query}
-                onChangeText={(text) => {
-                  setQuery(text);
-                  // The open row may not survive the filter; closing it beats
-                  // leaving an edit panel attached to something off-screen.
-                  openRow(null);
-                }}
+                onChangeText={setQuery}
                 placeholder="Search code, name or category…"
                 placeholderTextColor={Colors.textSecondary}
                 autoCapitalize="none"
@@ -408,10 +349,7 @@ export default function ItemAveragesScreen() {
                   <Pressable
                     key={option}
                     style={[styles.filterPill, active && styles.filterPillActive]}
-                    onPress={() => {
-                      setStatusFilter(option);
-                      openRow(null);
-                    }}>
+                    onPress={() => setStatusFilter(option)}>
                     <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
                       {option === 'all' ? 'All' : option === 'active' ? 'Active' : 'Retired'}
                     </Text>
@@ -440,14 +378,15 @@ export default function ItemAveragesScreen() {
               </View>
 
               {visible.map((row) => {
-                const open = expanded === row.teaItemId;
                 const hasData = row.periodsCounted > 0;
 
                 return (
                   <View key={row.teaItemId}>
                     <Pressable
-                      style={[styles.tableRow, open && styles.tableRowOpen]}
-                      onPress={() => openRow(open ? null : row.teaItemId, row)}>
+                      style={styles.tableRow}
+                      onPress={() =>
+                        router.push({ pathname: '/tea-item', params: { id: row.teaItemId } })
+                      }>
                       <View style={styles.colItem}>
                         <View style={styles.codeRow}>
                           <Text style={styles.tdBold}>{row.teaItemCode}</Text>
@@ -470,164 +409,9 @@ export default function ItemAveragesScreen() {
                       <Text style={[styles.tdBold, styles.colNum, styles.average]}>
                         {formatRs(row.averagePricePerKg)}
                       </Text>
+                      <Text style={styles.chevron}>›</Text>
                     </Pressable>
 
-                    {open && (
-                      <View style={styles.detail}>
-                        <Text style={styles.detailHeading}>
-                          {row.teaItemCode} at each auction in this period
-                        </Text>
-                        {!hasData && (
-                          <Text style={styles.detailEmpty}>
-                            No sale in this period.
-                          </Text>
-                        )}
-                        {row.points.map((point) => {
-                          const gap =
-                            row.averagePricePerKg === null
-                              ? null
-                              : Math.round((point.pricePerKg - row.averagePricePerKg) * 100) / 100;
-                          return (
-                            <View key={point.sellingPeriodId} style={styles.detailRow}>
-                              <Text style={styles.detailLabel}>
-                                {point.label} · {formatAuctionDate(point.auctionDate)}
-                              </Text>
-                              <Text style={styles.detailValue}>Rs. {formatRs(point.pricePerKg)}</Text>
-                              <Text
-                                style={[
-                                  styles.detailGap,
-                                  {
-                                    color:
-                                      gap === null || gap === 0
-                                        ? Colors.textSecondary
-                                        : gap > 0
-                                          ? Colors.above
-                                          : Colors.below,
-                                  },
-                                ]}>
-                                {gap === null ? '' : `${gap > 0 ? '+' : ''}${formatRs(gap)}`}
-                              </Text>
-                            </View>
-                          );
-                        })}
-                        <Text style={styles.detailFoot}>
-                          Latest in period: {row.latestPeriodLabel ?? '—'} at Rs.{' '}
-                          {formatRs(row.latestPricePerKg)}
-                          {row.latestAgainstAverage.verdict === 'unknown'
-                            ? ''
-                            : ` — ${formatPercent(
-                                row.latestAgainstAverage.differencePercent === null
-                                  ? null
-                                  : Math.abs(row.latestAgainstAverage.differencePercent),
-                              )} ${
-                                row.latestAgainstAverage.verdict === 'below' ? 'below' : 'above'
-                              } the period average.`}
-                        </Text>
-
-                        {/* Editing the grade itself */}
-                        {edit && (
-                          <View style={styles.editPanel}>
-                            <Text style={styles.detailHeading}>Edit grade</Text>
-                            <View style={styles.addForm}>
-                              <View style={styles.addField}>
-                                <Text style={styles.dateLabel}>CODE</Text>
-                                <TextInput
-                                  style={styles.dateInput}
-                                  value={edit.code}
-                                  onChangeText={(code) =>
-                                    setEdit((e) => (e ? { ...e, code } : e))
-                                  }
-                                  autoCapitalize="characters"
-                                  autoCorrect={false}
-                                />
-                              </View>
-                              <View style={[styles.addField, styles.addFieldWide]}>
-                                <Text style={styles.dateLabel}>NAME</Text>
-                                <TextInput
-                                  style={styles.dateInput}
-                                  value={edit.name}
-                                  onChangeText={(name) =>
-                                    setEdit((e) => (e ? { ...e, name } : e))
-                                  }
-                                />
-                              </View>
-                              <View style={styles.addField}>
-                                <Text style={styles.dateLabel}>CATEGORY</Text>
-                                <TextInput
-                                  style={styles.dateInput}
-                                  value={edit.category}
-                                  onChangeText={(category) =>
-                                    setEdit((e) => (e ? { ...e, category } : e))
-                                  }
-                                  placeholder="none"
-                                  placeholderTextColor={Colors.textSecondary}
-                                />
-                              </View>
-                            </View>
-
-                            <Text style={styles.editNote}>
-                              Renaming relabels every past sale of this grade, because they point at
-                              it rather than at its code. Right for a typo; to split one grade in
-                              two, add a new grade instead.
-                            </Text>
-
-                            <View style={styles.actionRow}>
-                              <Pressable
-                                style={[styles.applyButton, saving && styles.busy]}
-                                disabled={saving}
-                                onPress={() => saveEdit(row.teaItemId)}>
-                                <Text style={styles.applyButtonText}>
-                                  {saving ? 'Saving…' : 'Save changes'}
-                                </Text>
-                              </Pressable>
-
-                              <Pressable
-                                style={styles.resetButton}
-                                disabled={saving}
-                                onPress={() =>
-                                  toggleActive(row.teaItemId, row.teaItemCode, !row.active)
-                                }>
-                                <Text style={styles.resetButtonText}>
-                                  {row.active ? 'Retire' : 'Reinstate'}
-                                </Text>
-                              </Pressable>
-
-                              {confirmDelete === row.teaItemId ? (
-                                <>
-                                  <Pressable
-                                    style={[styles.dangerButton, saving && styles.busy]}
-                                    disabled={saving}
-                                    onPress={() => deleteGrade(row.teaItemId, row.teaItemCode)}>
-                                    <Text style={styles.dangerButtonText}>
-                                      {saving ? 'Deleting…' : 'Yes, delete'}
-                                    </Text>
-                                  </Pressable>
-                                  <Pressable
-                                    style={styles.resetButton}
-                                    onPress={() => setConfirmDelete(null)}>
-                                    <Text style={styles.resetButtonText}>Keep</Text>
-                                  </Pressable>
-                                </>
-                              ) : (
-                                <Pressable
-                                  style={styles.dangerOutline}
-                                  onPress={() => setConfirmDelete(row.teaItemId)}>
-                                  <Text style={styles.dangerOutlineText}>Delete</Text>
-                                </Pressable>
-                              )}
-                            </View>
-
-                            {confirmDelete === row.teaItemId && (
-                              <Text style={styles.editNote}>
-                                Deleting only works while nothing depends on this grade. Once it has
-                                been priced or put in a bulk set it is part of the record, and the
-                                API will say so — retire it instead.
-                              </Text>
-                            )}
-                          </View>
-                      )}
-                    </View>
-                  )}
                 </View>
               );
             })}
@@ -741,31 +525,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
-  editPanel: {
-    marginTop: 10,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    gap: 10,
-  },
-  editNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
-  actionRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
-  dangerButton: {
-    backgroundColor: Colors.below,
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-  },
-  dangerButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  dangerOutline: {
-    borderWidth: 1,
-    borderColor: Colors.below,
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  dangerOutlineText: { color: Colors.below, fontSize: 14, fontWeight: '600' },
-  detailEmpty: { fontSize: 12, color: Colors.textSecondary, fontStyle: 'italic' },
 
   searchRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   searchField: {
@@ -891,7 +650,6 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
     gap: 8,
   },
-  tableRowOpen: { backgroundColor: Colors.primaryLight },
   colItem: { flex: 2.2 },
   colNum: { flex: 1.1, textAlign: 'right' },
   tdBold: { fontSize: 13, fontWeight: '600', color: Colors.text },
@@ -899,27 +657,8 @@ const styles = StyleSheet.create({
   tdMuted: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },
   average: { fontSize: 14, color: Colors.primary },
 
-  detail: {
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    gap: 6,
-  },
-  detailHeading: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textSecondary,
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-  },
-  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  detailLabel: { flex: 1, fontSize: 12, color: Colors.textSecondary },
-  detailValue: { fontSize: 12, fontWeight: '700', color: Colors.text, minWidth: 90, textAlign: 'right' },
-  detailGap: { fontSize: 12, fontWeight: '600', minWidth: 70, textAlign: 'right' },
-  detailFoot: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16, marginTop: 4 },
 
+  chevron: { fontSize: 20, color: Colors.textSecondary, marginLeft: 2, width: 12, textAlign: 'right' },
   emptyNote: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18 },
   footNote: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center', lineHeight: 16 },
 });

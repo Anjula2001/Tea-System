@@ -51,7 +51,13 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
         {tabRoutes.map((tab) => {
           const routeObj = state.routes.find((r: { name: string }) => r.name === tab.name);
           const routeIndex = state.routes.findIndex((r: { name: string }) => r.name === tab.name);
-          const isFocused = state.index === routeIndex;
+          // A grade's own page has no tab of its own; it belongs to Item Prices,
+          // so that entry stays lit rather than leaving the bar with nothing
+          // selected while you are reading a grade.
+          const activeName = state.routes[state.index]?.name;
+          const isFocused =
+            state.index === routeIndex ||
+            (activeName === 'tea-item' && tab.name === 'item-averages');
           const IconComponent = tab.icon;
           const iconColor = isFocused ? Colors.primary : Colors.textSecondary;
 
@@ -125,6 +131,8 @@ export default function DashboardLayout() {
       <Tabs.Screen name="item-averages" options={{ title: 'Item Prices' }} />
       <Tabs.Screen name="market" options={{ title: 'Market' }} />
       <Tabs.Screen name="reports" options={{ title: 'History' }} />
+      {/* Reached by tapping a grade, not from the bar — hence no tabRoutes entry. */}
+      <Tabs.Screen name="tea-item" options={{ title: 'Tea Item', href: null }} />
     </Tabs>
   );
 }

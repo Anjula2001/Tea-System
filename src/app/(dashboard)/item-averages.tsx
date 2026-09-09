@@ -2,10 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { ScrollView, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
 import { useLoadedStore } from '@/components/data-state';
 import Header from '@/components/header';
-import { LeafIcon } from '@/components/ui-icons';
+import { LeafIcon, PlusIcon } from '@/components/ui-icons';
 import { formatAuctionDate, formatPercent, formatRs } from '@/domain/averaging';
 import type { DateRange } from '@/domain/types';
 import { periodsInRange, selectItemPriceBreakdown, useTeaStore } from '@/store/tea-store';
@@ -27,6 +28,11 @@ export default function ItemAveragesScreen() {
   const { ready, gate } = useLoadedStore();
   const state = useTeaStore();
   const { sellingPeriods } = state;
+  const addTeaItem = useTeaStore((s) => s.addTeaItem);
+  const updateTeaItem = useTeaStore((s) => s.updateTeaItem);
+  const removeTeaItem = useTeaStore((s) => s.removeTeaItem);
+  const setTeaItemActive = useTeaStore((s) => s.setTeaItemActive);
+  const saving = useTeaStore((s) => s.saving);
 
   const sorted = useMemo(
     () => [...sellingPeriods].sort((a, b) => a.auctionDate.localeCompare(b.auctionDate)),
@@ -91,9 +97,118 @@ export default function ItemAveragesScreen() {
     ].filter((p): p is { label: string; value: DateRange } => p.value !== null);
   }, [sorted, bounds]);
 
+  // ------------------------------------------------------------------ CRUD
+  const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'retired'>('all');
+  const [draft, setDraft] = useState({ code: '', name: '', category: '' });
+  const [edit, setEdit] = useState<{ code: string; name: string; category: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+
+  const report = (error: unknown, verb: string) =>
+    setNotice({
+      text:
+        error instanceof ApiError
+          ? `${verb} — ${error.message}`
+          : `${verb} — the API could not be reached.`,
+      tone: 'error',
+    });
+
+  const openRow = (teaItemId: string | null, row?: { teaItemCode: string; teaItemName: string; category: string | null }) => {
+    setExpanded(teaItemId);
+    setConfirmDelete(null);
+    setEdit(
+      teaItemId && row
+        ? { code: row.teaItemCode, name: row.teaItemName, category: row.category ?? '' }
+        : null,
+    );
+  };
+
+  const addGrade = async () => {
+    if (draft.code.trim() === '' || draft.name.trim() === '') {
+      setNotice({ text: 'A grade needs both a code and a name.', tone: 'error' });
+      return;
+    }
+    try {
+      const created = await addTeaItem({
+        code: draft.code.trim(),
+        name: draft.name.trim(),
+        category: draft.category.trim() === '' ? null : draft.category.trim(),
+      });
+      setDraft({ code: '', name: '', category: '' });
+      setShowAdd(false);
+      setNotice({ text: `Added ${created.code} — ${created.name}.`, tone: 'ok' });
+    } catch (error) {
+      report(error, 'Not added');
+    }
+  };
+
+  const saveEdit = async (teaItemId: string) => {
+    if (!edit) return;
+    if (edit.code.trim() === '' || edit.name.trim() === '') {
+      setNotice({ text: 'A grade needs both a code and a name.', tone: 'error' });
+      return;
+    }
+    try {
+      const saved = await updateTeaItem(teaItemId, {
+        code: edit.code.trim(),
+        name: edit.name.trim(),
+        category: edit.category.trim() === '' ? null : edit.category.trim(),
+      });
+      setNotice({ text: `Saved ${saved.code} — ${saved.name}.`, tone: 'ok' });
+    } catch (error) {
+      report(error, 'Not saved');
+    }
+  };
+
+  const toggleActive = async (teaItemId: string, code: string, active: boolean) => {
+    try {
+      await setTeaItemActive(teaItemId, active);
+      setNotice({
+        text: active
+          ? `${code} is active again and will appear on the entry screens.`
+          : `${code} retired. Its history stays on file; it just will not be offered for new prices or bulk sets.`,
+        tone: 'ok',
+      });
+    } catch (error) {
+      report(error, 'Not changed');
+    }
+  };
+
+  const deleteGrade = async (teaItemId: string, code: string) => {
+    try {
+      await removeTeaItem(teaItemId);
+      setExpanded(null);
+      setConfirmDelete(null);
+      setNotice({ text: `Deleted ${code}.`, tone: 'ok' });
+    } catch (error) {
+      report(error, 'Not deleted');
+    }
+  };
+
   const breakdown = selectItemPriceBreakdown(state, applied);
   const periods = periodsInRange(state, applied);
-  const withData = breakdown.filter((row) => row.periodsCounted > 0);
+
+  /*
+   * Searching matches code, name and category together, because people reach
+   * for whichever they remember — "BOPF", "fannings" and "Broken" should all
+   * find the same row. Matching is case- and space-insensitive so a pasted code
+   * with a stray space still lands.
+   */
+  const needle = query.trim().toLowerCase();
+  const visible = breakdown.filter((row) => {
+    if (statusFilter === 'active' && !row.active) return false;
+    if (statusFilter === 'retired' && row.active) return false;
+    if (needle === '') return true;
+    return [row.teaItemCode, row.teaItemName, row.category ?? '']
+      .join(' ')
+      .toLowerCase()
+      .includes(needle);
+  });
+
+  const withData = visible.filter((row) => row.periodsCounted > 0);
+  const filtering = needle !== '' || statusFilter !== 'all';
 
   if (!ready) return gate;
 
@@ -115,6 +230,14 @@ export default function ItemAveragesScreen() {
         style={styles.container}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
+
+        {notice && (
+          <View style={[styles.notice, notice.tone === 'error' && styles.noticeError]}>
+            <Text style={[styles.noticeText, notice.tone === 'error' && styles.noticeErrorText]}>
+              {notice.text}
+            </Text>
+          </View>
+        )}
 
         {/* Choosing the period */}
         <View style={styles.card}>
@@ -196,106 +319,349 @@ export default function ItemAveragesScreen() {
 
         {/* The answer */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Average price per kg</Text>
-          <Text style={styles.sectionSubtitle}>
-            The mean of every auction in the period — one price per auction, corrections resolved.
-            The same average the planning screen values a bulk set at. Tap a grade to see the
-            sales behind it.
-          </Text>
+          <View style={styles.rowBetween}>
+            <View style={styles.flexOne}>
+              <Text style={styles.sectionTitle}>Average price per kg</Text>
+              <Text style={styles.sectionSubtitle}>
+                The mean of every auction in the period — one price per auction, corrections
+                resolved. The same average the planning screen values a bulk set at. Tap a grade
+                for the sales behind it, and to edit or retire it.
+              </Text>
+            </View>
+            <Pressable style={styles.addToggle} onPress={() => setShowAdd((on) => !on)}>
+              <PlusIcon color={Colors.primary} size={14} />
+              <Text style={styles.addToggleText}>{showAdd ? 'Cancel' : 'Add grade'}</Text>
+            </Pressable>
+          </View>
 
-          <View style={styles.table}>
-            <View style={styles.tableHeader}>
-              <Text style={[styles.th, styles.colItem]}>Tea Item</Text>
-              <Text style={[styles.th, styles.colNum]}>Auctions</Text>
-              <Text style={[styles.th, styles.colNum]}>Low</Text>
-              <Text style={[styles.th, styles.colNum]}>High</Text>
-              <Text style={[styles.th, styles.colNum]}>Average</Text>
+          {showAdd && (
+            <View style={styles.addForm}>
+              <View style={styles.addField}>
+                <Text style={styles.dateLabel}>CODE</Text>
+                <TextInput
+                  style={styles.dateInput}
+                  value={draft.code}
+                  onChangeText={(code) => setDraft((d) => ({ ...d, code }))}
+                  placeholder="FBOP"
+                  placeholderTextColor={Colors.textSecondary}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                />
+              </View>
+              <View style={[styles.addField, styles.addFieldWide]}>
+                <Text style={styles.dateLabel}>NAME</Text>
+                <TextInput
+                  style={styles.dateInput}
+                  value={draft.name}
+                  onChangeText={(name) => setDraft((d) => ({ ...d, name }))}
+                  placeholder="Flowery Broken Orange Pekoe"
+                  placeholderTextColor={Colors.textSecondary}
+                />
+              </View>
+              <View style={styles.addField}>
+                <Text style={styles.dateLabel}>CATEGORY</Text>
+                <TextInput
+                  style={styles.dateInput}
+                  value={draft.category}
+                  onChangeText={(category) => setDraft((d) => ({ ...d, category }))}
+                  placeholder="Flowery Leaf"
+                  placeholderTextColor={Colors.textSecondary}
+                />
+              </View>
+              <Pressable
+                style={[styles.applyButton, saving && styles.busy]}
+                disabled={saving}
+                onPress={addGrade}>
+                <Text style={styles.applyButtonText}>{saving ? 'Saving…' : 'Add'}</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {/* Finding a grade */}
+          <View style={styles.searchRow}>
+            <View style={styles.searchField}>
+              <TextInput
+                style={styles.searchInput}
+                value={query}
+                onChangeText={(text) => {
+                  setQuery(text);
+                  // The open row may not survive the filter; closing it beats
+                  // leaving an edit panel attached to something off-screen.
+                  openRow(null);
+                }}
+                placeholder="Search code, name or category…"
+                placeholderTextColor={Colors.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {query !== '' && (
+                <Pressable style={styles.clearButton} onPress={() => setQuery('')}>
+                  <Text style={styles.clearButtonText}>Clear</Text>
+                </Pressable>
+              )}
             </View>
 
-            {breakdown.map((row) => {
-              const open = expanded === row.teaItemId;
-              const hasData = row.periodsCounted > 0;
-
-              return (
-                <View key={row.teaItemId}>
+            <View style={styles.filterRow}>
+              {(['all', 'active', 'retired'] as const).map((option) => {
+                const active = statusFilter === option;
+                return (
                   <Pressable
-                    style={[styles.tableRow, open && styles.tableRowOpen]}
-                    onPress={() => hasData && setExpanded(open ? null : row.teaItemId)}>
-                    <View style={styles.colItem}>
-                      <Text style={styles.tdBold}>{row.teaItemCode}</Text>
-                      <Text style={styles.tdMuted}>{row.teaItemName}</Text>
-                    </View>
-                    <Text style={[styles.tdText, styles.colNum]}>
-                      {hasData ? row.periodsCounted : '—'}
-                    </Text>
-                    <Text style={[styles.tdText, styles.colNum]}>
-                      {formatRs(row.lowestPricePerKg)}
-                    </Text>
-                    <Text style={[styles.tdText, styles.colNum]}>
-                      {formatRs(row.highestPricePerKg)}
-                    </Text>
-                    <Text style={[styles.tdBold, styles.colNum, styles.average]}>
-                      {formatRs(row.averagePricePerKg)}
+                    key={option}
+                    style={[styles.filterPill, active && styles.filterPillActive]}
+                    onPress={() => {
+                      setStatusFilter(option);
+                      openRow(null);
+                    }}>
+                    <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
+                      {option === 'all' ? 'All' : option === 'active' ? 'Active' : 'Retired'}
                     </Text>
                   </Pressable>
+                );
+              })}
+            </View>
+          </View>
 
-                  {open && (
-                    <View style={styles.detail}>
-                      <Text style={styles.detailHeading}>
-                        {row.teaItemCode} at each auction in this period
+          <Text style={styles.resultCount}>
+            {filtering
+              ? `${visible.length} of ${breakdown.length} grade${
+                  breakdown.length === 1 ? '' : 's'
+                }`
+              : `${breakdown.length} grade${breakdown.length === 1 ? '' : 's'}`}
+          </Text>
+
+          {visible.length > 0 && (
+            <View style={styles.table}>
+              <View style={styles.tableHeader}>
+                <Text style={[styles.th, styles.colItem]}>Tea Item</Text>
+                <Text style={[styles.th, styles.colNum]}>Auctions</Text>
+                <Text style={[styles.th, styles.colNum]}>Low</Text>
+                <Text style={[styles.th, styles.colNum]}>High</Text>
+                <Text style={[styles.th, styles.colNum]}>Average</Text>
+              </View>
+
+              {visible.map((row) => {
+                const open = expanded === row.teaItemId;
+                const hasData = row.periodsCounted > 0;
+
+                return (
+                  <View key={row.teaItemId}>
+                    <Pressable
+                      style={[styles.tableRow, open && styles.tableRowOpen]}
+                      onPress={() => openRow(open ? null : row.teaItemId, row)}>
+                      <View style={styles.colItem}>
+                        <View style={styles.codeRow}>
+                          <Text style={styles.tdBold}>{row.teaItemCode}</Text>
+                          {!row.active && <Text style={styles.retiredTag}>retired</Text>}
+                        </View>
+                        <Text style={styles.tdMuted}>
+                          {row.teaItemName}
+                          {row.category ? ` · ${row.category}` : ''}
+                        </Text>
+                      </View>
+                      <Text style={[styles.tdText, styles.colNum]}>
+                        {hasData ? row.periodsCounted : '—'}
                       </Text>
-                      {row.points.map((point) => {
-                        const gap =
-                          row.averagePricePerKg === null
-                            ? null
-                            : Math.round((point.pricePerKg - row.averagePricePerKg) * 100) / 100;
-                        return (
-                          <View key={point.sellingPeriodId} style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>
-                              {point.label} · {formatAuctionDate(point.auctionDate)}
+                      <Text style={[styles.tdText, styles.colNum]}>
+                        {formatRs(row.lowestPricePerKg)}
+                      </Text>
+                      <Text style={[styles.tdText, styles.colNum]}>
+                        {formatRs(row.highestPricePerKg)}
+                      </Text>
+                      <Text style={[styles.tdBold, styles.colNum, styles.average]}>
+                        {formatRs(row.averagePricePerKg)}
+                      </Text>
+                    </Pressable>
+
+                    {open && (
+                      <View style={styles.detail}>
+                        <Text style={styles.detailHeading}>
+                          {row.teaItemCode} at each auction in this period
+                        </Text>
+                        {!hasData && (
+                          <Text style={styles.detailEmpty}>
+                            No sale in this period.
+                          </Text>
+                        )}
+                        {row.points.map((point) => {
+                          const gap =
+                            row.averagePricePerKg === null
+                              ? null
+                              : Math.round((point.pricePerKg - row.averagePricePerKg) * 100) / 100;
+                          return (
+                            <View key={point.sellingPeriodId} style={styles.detailRow}>
+                              <Text style={styles.detailLabel}>
+                                {point.label} · {formatAuctionDate(point.auctionDate)}
+                              </Text>
+                              <Text style={styles.detailValue}>Rs. {formatRs(point.pricePerKg)}</Text>
+                              <Text
+                                style={[
+                                  styles.detailGap,
+                                  {
+                                    color:
+                                      gap === null || gap === 0
+                                        ? Colors.textSecondary
+                                        : gap > 0
+                                          ? Colors.above
+                                          : Colors.below,
+                                  },
+                                ]}>
+                                {gap === null ? '' : `${gap > 0 ? '+' : ''}${formatRs(gap)}`}
+                              </Text>
+                            </View>
+                          );
+                        })}
+                        <Text style={styles.detailFoot}>
+                          Latest in period: {row.latestPeriodLabel ?? '—'} at Rs.{' '}
+                          {formatRs(row.latestPricePerKg)}
+                          {row.latestAgainstAverage.verdict === 'unknown'
+                            ? ''
+                            : ` — ${formatPercent(
+                                row.latestAgainstAverage.differencePercent === null
+                                  ? null
+                                  : Math.abs(row.latestAgainstAverage.differencePercent),
+                              )} ${
+                                row.latestAgainstAverage.verdict === 'below' ? 'below' : 'above'
+                              } the period average.`}
+                        </Text>
+
+                        {/* Editing the grade itself */}
+                        {edit && (
+                          <View style={styles.editPanel}>
+                            <Text style={styles.detailHeading}>Edit grade</Text>
+                            <View style={styles.addForm}>
+                              <View style={styles.addField}>
+                                <Text style={styles.dateLabel}>CODE</Text>
+                                <TextInput
+                                  style={styles.dateInput}
+                                  value={edit.code}
+                                  onChangeText={(code) =>
+                                    setEdit((e) => (e ? { ...e, code } : e))
+                                  }
+                                  autoCapitalize="characters"
+                                  autoCorrect={false}
+                                />
+                              </View>
+                              <View style={[styles.addField, styles.addFieldWide]}>
+                                <Text style={styles.dateLabel}>NAME</Text>
+                                <TextInput
+                                  style={styles.dateInput}
+                                  value={edit.name}
+                                  onChangeText={(name) =>
+                                    setEdit((e) => (e ? { ...e, name } : e))
+                                  }
+                                />
+                              </View>
+                              <View style={styles.addField}>
+                                <Text style={styles.dateLabel}>CATEGORY</Text>
+                                <TextInput
+                                  style={styles.dateInput}
+                                  value={edit.category}
+                                  onChangeText={(category) =>
+                                    setEdit((e) => (e ? { ...e, category } : e))
+                                  }
+                                  placeholder="none"
+                                  placeholderTextColor={Colors.textSecondary}
+                                />
+                              </View>
+                            </View>
+
+                            <Text style={styles.editNote}>
+                              Renaming relabels every past sale of this grade, because they point at
+                              it rather than at its code. Right for a typo; to split one grade in
+                              two, add a new grade instead.
                             </Text>
-                            <Text style={styles.detailValue}>Rs. {formatRs(point.pricePerKg)}</Text>
-                            <Text
-                              style={[
-                                styles.detailGap,
-                                {
-                                  color:
-                                    gap === null || gap === 0
-                                      ? Colors.textSecondary
-                                      : gap > 0
-                                        ? Colors.above
-                                        : Colors.below,
-                                },
-                              ]}>
-                              {gap === null ? '' : `${gap > 0 ? '+' : ''}${formatRs(gap)}`}
-                            </Text>
+
+                            <View style={styles.actionRow}>
+                              <Pressable
+                                style={[styles.applyButton, saving && styles.busy]}
+                                disabled={saving}
+                                onPress={() => saveEdit(row.teaItemId)}>
+                                <Text style={styles.applyButtonText}>
+                                  {saving ? 'Saving…' : 'Save changes'}
+                                </Text>
+                              </Pressable>
+
+                              <Pressable
+                                style={styles.resetButton}
+                                disabled={saving}
+                                onPress={() =>
+                                  toggleActive(row.teaItemId, row.teaItemCode, !row.active)
+                                }>
+                                <Text style={styles.resetButtonText}>
+                                  {row.active ? 'Retire' : 'Reinstate'}
+                                </Text>
+                              </Pressable>
+
+                              {confirmDelete === row.teaItemId ? (
+                                <>
+                                  <Pressable
+                                    style={[styles.dangerButton, saving && styles.busy]}
+                                    disabled={saving}
+                                    onPress={() => deleteGrade(row.teaItemId, row.teaItemCode)}>
+                                    <Text style={styles.dangerButtonText}>
+                                      {saving ? 'Deleting…' : 'Yes, delete'}
+                                    </Text>
+                                  </Pressable>
+                                  <Pressable
+                                    style={styles.resetButton}
+                                    onPress={() => setConfirmDelete(null)}>
+                                    <Text style={styles.resetButtonText}>Keep</Text>
+                                  </Pressable>
+                                </>
+                              ) : (
+                                <Pressable
+                                  style={styles.dangerOutline}
+                                  onPress={() => setConfirmDelete(row.teaItemId)}>
+                                  <Text style={styles.dangerOutlineText}>Delete</Text>
+                                </Pressable>
+                              )}
+                            </View>
+
+                            {confirmDelete === row.teaItemId && (
+                              <Text style={styles.editNote}>
+                                Deleting only works while nothing depends on this grade. Once it has
+                                been priced or put in a bulk set it is part of the record, and the
+                                API will say so — retire it instead.
+                              </Text>
+                            )}
                           </View>
-                        );
-                      })}
-                      <Text style={styles.detailFoot}>
-                        Latest in period: {row.latestPeriodLabel ?? '—'} at Rs.{' '}
-                        {formatRs(row.latestPricePerKg)}
-                        {row.latestAgainstAverage.verdict === 'unknown'
-                          ? ''
-                          : ` — ${formatPercent(
-                              row.latestAgainstAverage.differencePercent === null
-                                ? null
-                                : Math.abs(row.latestAgainstAverage.differencePercent),
-                            )} ${
-                              row.latestAgainstAverage.verdict === 'below' ? 'below' : 'above'
-                            } the period average.`}
-                      </Text>
+                      )}
                     </View>
                   )}
                 </View>
               );
             })}
           </View>
+          )}
 
-          {withData.length === 0 && periods.length > 0 && (
+          {visible.length === 0 && (
+            <View style={styles.emptyBlock}>
+              <Text style={styles.emptyNote}>
+                {needle === ''
+                  ? `No ${statusFilter} grades.`
+                  : `Nothing matches “${query.trim()}”.`}
+              </Text>
+              {needle !== '' && (
+                <Pressable
+                  style={styles.addToggle}
+                  onPress={() => {
+                    setDraft({ code: query.trim().toUpperCase(), name: '', category: '' });
+                    setShowAdd(true);
+                    setQuery('');
+                  }}>
+                  <PlusIcon color={Colors.primary} size={14} />
+                  <Text style={styles.addToggleText}>
+                    Add “{query.trim().toUpperCase()}” as a new grade
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+          )}
+
+          {visible.length > 0 && withData.length === 0 && periods.length > 0 && (
             <Text style={styles.emptyNote}>
-              These auctions have no per-item prices recorded yet. Enter them on Record Auction
-              Results and the averages appear here.
+              {filtering ? 'These grades have' : 'These auctions have'} no per-item prices recorded
+              in this period. Enter them on Record Auction Results and the averages appear here.
             </Text>
           )}
         </View>
@@ -320,6 +686,123 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: Colors.background },
   container: { flex: 1 },
   scrollContent: { padding: 20, gap: 20, paddingBottom: 48 },
+  flexOne: { flex: 1 },
+  rowBetween: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  busy: { opacity: 0.6 },
+
+  notice: {
+    backgroundColor: Colors.aboveLight,
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.above,
+  },
+  noticeText: { fontSize: 13, color: Colors.above, fontWeight: '600', lineHeight: 18 },
+  noticeError: { backgroundColor: Colors.belowLight, borderColor: Colors.below },
+  noticeErrorText: { color: Colors.below },
+
+  addToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: Colors.primary,
+  },
+  addToggleText: { fontSize: 13, fontWeight: '600', color: Colors.primary },
+  addForm: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-end',
+    gap: 10,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    padding: 14,
+  },
+  addField: { flexGrow: 1, flexBasis: 130, minWidth: 120, gap: 4 },
+  addFieldWide: { flexBasis: 200 },
+
+  codeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  retiredTag: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#8A6D1F',
+    backgroundColor: Colors.accentLight,
+    borderWidth: 1,
+    borderColor: '#F0D48A',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    overflow: 'hidden',
+  },
+
+  editPanel: {
+    marginTop: 10,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    gap: 10,
+  },
+  editNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
+  actionRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
+  dangerButton: {
+    backgroundColor: Colors.below,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  dangerButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  dangerOutline: {
+    borderWidth: 1,
+    borderColor: Colors.below,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  dangerOutlineText: { color: Colors.below, fontSize: 14, fontWeight: '600' },
+  detailEmpty: { fontSize: 12, color: Colors.textSecondary, fontStyle: 'italic' },
+
+  searchRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
+  searchField: {
+    flexGrow: 1,
+    flexBasis: 220,
+    minWidth: 180,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: Colors.text,
+  },
+  clearButton: { paddingHorizontal: 6, paddingVertical: 4 },
+  clearButtonText: { fontSize: 12, fontWeight: '600', color: Colors.primary },
+  filterRow: { flexDirection: 'row', gap: 6 },
+  filterPill: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: Colors.background,
+  },
+  filterPillActive: { backgroundColor: Colors.primaryLight, borderColor: Colors.primary },
+  filterPillText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
+  filterPillTextActive: { color: Colors.primary },
+  resultCount: { fontSize: 11, color: Colors.textSecondary, marginTop: -6 },
+  emptyBlock: { alignItems: 'flex-start', gap: 10 },
 
   card: {
     backgroundColor: Colors.card,

@@ -27,6 +27,7 @@ import {
 } from '@/domain/averaging';
 import type { Comparison } from '@/domain/types';
 import {
+  selectActiveTeaItems,
   selectLatestBulkSet,
   selectPlanVersusOutcome,
   selectExternalResultsForPeriod,
@@ -61,7 +62,10 @@ export default function AuctionResultsScreen() {
   const { ready, gate } = useLoadedStore();
   const { width } = useWindowDimensions();
   const state = useTeaStore();
-  const { teaItems, externalFactories, sellingPeriods } = state;
+  const { externalFactories, sellingPeriods } = state;
+  // Retired grades stay in the cache to be managed on Item Prices, but nothing
+  // new should be priced against one.
+  const teaItems = selectActiveTeaItems(state);
   const recordOurPrices = useTeaStore((s) => s.recordOurPrices);
   const recordOurBulkResult = useTeaStore((s) => s.recordOurBulkResult);
   const blendOurBulkResult = useTeaStore((s) => s.blendOurBulkResult);

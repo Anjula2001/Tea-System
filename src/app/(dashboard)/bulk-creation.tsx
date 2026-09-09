@@ -18,6 +18,7 @@ import {
 } from '@/domain/averaging';
 import type { BulkSetItem } from '@/domain/types';
 import {
+  selectActiveTeaItems,
   selectLatestPlannedBulkSet,
   selectMarketAverage,
   selectOurItemAverages,
@@ -53,7 +54,10 @@ import {
 export default function BulkSetScreen() {
   const { ready, gate } = useLoadedStore();
   const state = useTeaStore();
-  const { teaItems, bulkSets, sellingPeriods, range } = state;
+  const { bulkSets, sellingPeriods, range } = state;
+  // A retired grade cannot go into a new set; sets that already hold one keep
+  // it, because their quantities are on file.
+  const teaItems = selectActiveTeaItems(state);
   const saveBulkSet = useTeaStore((s) => s.saveBulkSet);
   const saving = useTeaStore((s) => s.saving);
 

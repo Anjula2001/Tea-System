@@ -99,6 +99,23 @@ interface TeaStoreState {
     entries: { externalFactoryId: string; pricePerKg: number }[],
   ) => Promise<void>;
 
+  /** Add a grade to the catalogue. */
+  addTeaItem: (input: {
+    code: string;
+    name: string;
+    category?: string | null;
+    sortOrder?: number;
+  }) => Promise<TeaItem>;
+  /** Rename, recode or recategorise a grade. Past prices follow it. */
+  updateTeaItem: (
+    id: string,
+    patch: { code?: string; name?: string; category?: string | null; sortOrder?: number },
+  ) => Promise<TeaItem>;
+  /** Delete a grade outright. Throws when anything on file depends on it. */
+  removeTeaItem: (id: string) => Promise<void>;
+  /** Retire a grade without deleting its history, or bring one back. */
+  setTeaItemActive: (id: string, active: boolean) => Promise<void>;
+
   /** Add another factory to the benchmark. */
   addExternalFactory: (input: {
     code: string;
@@ -192,7 +209,9 @@ export const useTeaStore = create<TeaStoreState>((set, get) => ({
 
     try {
       const [teaItems, externalFactories, sellingPeriods, bulkSets] = await Promise.all([
-        api.teaItems.list(),
+        // Inactive grades come along: they must stay visible to manage, and
+        // every selector that should ignore them already filters on `active`.
+        api.teaItems.list(true),
         api.externalFactories.list(),
         api.sellingPeriods.list(),
         fetchBulkSets(),
@@ -297,6 +316,56 @@ export const useTeaStore = create<TeaStoreState>((set, get) => ({
    * set that comes back is the database's version, not the draft, so a rejected
    * or adjusted save can never look like it succeeded.
    */
+  addTeaItem: async (input) => {
+    set({ saving: true });
+    try {
+      const item = await api.teaItems.create(input);
+      set((state) => ({
+        teaItems: [...state.teaItems, item].sort(
+          (a, b) => a.sortOrder - b.sortOrder || a.code.localeCompare(b.code),
+        ),
+      }));
+      return item;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  updateTeaItem: async (id, patch) => {
+    set({ saving: true });
+    try {
+      const item = await api.teaItems.update(id, patch);
+      set((state) => ({
+        teaItems: state.teaItems
+          .map((t) => (t.id === id ? item : t))
+          .sort((a, b) => a.sortOrder - b.sortOrder || a.code.localeCompare(b.code)),
+      }));
+      return item;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  removeTeaItem: async (id) => {
+    set({ saving: true });
+    try {
+      await api.teaItems.remove(id);
+      set((state) => ({ teaItems: state.teaItems.filter((t) => t.id !== id) }));
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  setTeaItemActive: async (id, active) => {
+    set({ saving: true });
+    try {
+      const item = await api.teaItems.setActive(id, active);
+      set((state) => ({ teaItems: state.teaItems.map((t) => (t.id === id ? item : t)) }));
+    } finally {
+      set({ saving: false });
+    }
+  },
+
   addExternalFactory: async (input) => {
     set({ saving: true });
     try {
@@ -402,6 +471,17 @@ function latestPerKey<T extends { recordedAt: string }>(
     if (!current || row.recordedAt >= current.recordedAt) winners.set(k, row);
   }
   return [...winners.values()];
+}
+
+/**
+ * The grades in play.
+ *
+ * The cache holds retired grades too, so they stay manageable on Item Prices —
+ * but nothing new should be priced or planned against one, so every screen that
+ * offers an input reads this rather than the raw list.
+ */
+export function selectActiveTeaItems(state: Snapshot): TeaItem[] {
+  return state.teaItems.filter((item) => item.active);
 }
 
 export function periodsInRange(state: Snapshot, range: DateRange): SellingPeriod[] {
@@ -752,6 +832,8 @@ export interface ItemPriceBreakdown {
   teaItemCode: string;
   teaItemName: string;
   category: string | null;
+  /** Retired grades still appear here — their history is still worth reading. */
+  active: boolean;
   averagePricePerKg: number | null;
   /** How many auctions in range the average is drawn from. */
   periodsCounted: number;
@@ -792,8 +874,9 @@ export function selectItemPriceBreakdown(
     else pointsByItem.set(price.teaItemId, [point]);
   }
 
+  // Retired grades included on purpose: this is the screen where they are
+  // managed, and a grade's past sales stay meaningful after it is retired.
   return state.teaItems
-    .filter((item) => item.active)
     .map((item) => {
       const points = (pointsByItem.get(item.id) ?? []).sort((a, b) =>
         a.auctionDate.localeCompare(b.auctionDate),
@@ -807,6 +890,7 @@ export function selectItemPriceBreakdown(
         teaItemCode: item.code,
         teaItemName: item.name,
         category: item.category,
+        active: item.active,
         averagePricePerKg: summary.averagePricePerKg,
         periodsCounted: summary.periodsCounted,
         lowestPricePerKg: prices.length > 0 ? Math.min(...prices) : null,

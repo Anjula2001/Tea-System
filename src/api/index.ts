@@ -20,7 +20,22 @@ import { http } from './client';
 
 export const api = {
   teaItems: {
-    list: () => http.get<TeaItem[]>('/tea-items'),
+    list: (includeInactive = false) =>
+      http.get<TeaItem[]>(`/tea-items?includeInactive=${includeInactive}`),
+    create: (body: {
+      code: string;
+      name: string;
+      category?: string | null;
+      sortOrder?: number;
+    }) => http.post<TeaItem>('/tea-items', body),
+    update: (
+      id: string,
+      body: { code?: string; name?: string; category?: string | null; sortOrder?: number },
+    ) => http.patch<TeaItem>(`/tea-items/${id}`, body),
+    /** Only succeeds while nothing references the grade; 409 otherwise. */
+    remove: (id: string) => http.delete<void>(`/tea-items/${id}`),
+    setActive: (id: string, active: boolean) =>
+      http.patch<TeaItem>(`/tea-items/${id}/active`, { active }),
   },
 
   externalFactories: {

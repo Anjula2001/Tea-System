@@ -14,6 +14,7 @@ import {
   selectMarketAverage,
   selectOurBulkAverage,
   selectOurItemAverages,
+  selectActiveTeaItems,
   selectOurPricesForPeriod,
   selectOverallComparison,
   selectPeriodComparisons,
@@ -32,7 +33,8 @@ type Filter = 'all' | 'above' | 'below';
 export default function ReportsScreen() {
   const { ready, gate } = useLoadedStore();
   const state = useTeaStore();
-  const { sellingPeriods, teaItems, externalFactories } = state;
+  const { sellingPeriods, externalFactories } = state;
+  const teaItems = selectActiveTeaItems(state);
   const setRange = useTeaStore((s) => s.setRange);
   const resetRange = useTeaStore((s) => s.resetRange);
   const { range } = state;

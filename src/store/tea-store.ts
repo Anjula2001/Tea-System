@@ -122,6 +122,13 @@ interface TeaStoreState {
     name: string;
     region?: string | null;
   }) => Promise<ExternalFactory>;
+  /** Rename, recode or re-region a factory. Past results follow it. */
+  updateExternalFactory: (
+    id: string,
+    patch: { code?: string; name?: string; region?: string | null },
+  ) => Promise<ExternalFactory>;
+  /** Delete a factory outright. Throws when it has results on file. */
+  removeExternalFactory: (id: string) => Promise<void>;
   /** Retire a factory without deleting its history, or bring one back. */
   setExternalFactoryActive: (id: string, active: boolean) => Promise<void>;
 
@@ -212,7 +219,7 @@ export const useTeaStore = create<TeaStoreState>((set, get) => ({
         // Inactive grades come along: they must stay visible to manage, and
         // every selector that should ignore them already filters on `active`.
         api.teaItems.list(true),
-        api.externalFactories.list(),
+        api.externalFactories.list(true),
         api.sellingPeriods.list(),
         fetchBulkSets(),
       ]);
@@ -381,11 +388,43 @@ export const useTeaStore = create<TeaStoreState>((set, get) => ({
     }
   },
 
+  updateExternalFactory: async (id, patch) => {
+    set({ saving: true });
+    try {
+      const factory = await api.externalFactories.update(id, patch);
+      set((state) => ({
+        externalFactories: state.externalFactories
+          .map((f) => (f.id === id ? factory : f))
+          .sort((a, b) => a.code.localeCompare(b.code)),
+      }));
+      return factory;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  removeExternalFactory: async (id) => {
+    set({ saving: true });
+    try {
+      await api.externalFactories.remove(id);
+      set((state) => ({
+        externalFactories: state.externalFactories.filter((f) => f.id !== id),
+      }));
+    } finally {
+      set({ saving: false });
+    }
+  },
+
   setExternalFactoryActive: async (id, active) => {
-    const updated = await api.externalFactories.setActive(id, active);
-    set((state) => ({
-      externalFactories: state.externalFactories.map((f) => (f.id === id ? updated : f)),
-    }));
+    set({ saving: true });
+    try {
+      const updated = await api.externalFactories.setActive(id, active);
+      set((state) => ({
+        externalFactories: state.externalFactories.map((f) => (f.id === id ? updated : f)),
+      }));
+    } finally {
+      set({ saving: false });
+    }
   },
 
   saveBulkSet: async (input) => {
@@ -482,6 +521,18 @@ function latestPerKey<T extends { recordedAt: string }>(
  */
 export function selectActiveTeaItems(state: Snapshot): TeaItem[] {
   return state.teaItems.filter((item) => item.active);
+}
+
+/**
+ * The factories still counted in the benchmark.
+ *
+ * Retired ones stay in the cache so they can be managed and read, but nothing
+ * new should be priced against one — and `selectMarketAverage` already leaves
+ * them out of the average, so offering them for entry would collect figures
+ * that go nowhere.
+ */
+export function selectActiveExternalFactories(state: Snapshot): ExternalFactory[] {
+  return state.externalFactories.filter((factory) => factory.active);
 }
 
 export function periodsInRange(state: Snapshot, range: DateRange): SellingPeriod[] {
@@ -917,6 +968,8 @@ export interface FactoryPriceBreakdown {
   code: string;
   name: string;
   region: string | null;
+  /** Retired factories are listed so they can be managed, and marked as such. */
+  active: boolean;
   averagePricePerKg: number | null;
   periodsCounted: number;
   lowestPricePerKg: number | null;
@@ -975,6 +1028,7 @@ export function selectFactoryPriceBreakdown(
       code: factory.code,
       name: factory.name,
       region: factory.region,
+      active: factory.active,
       averagePricePerKg: summary.averagePricePerKg,
       periodsCounted: summary.periodsCounted,
       lowestPricePerKg: prices.length > 0 ? Math.min(...prices) : null,

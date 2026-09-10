@@ -16,6 +16,18 @@ interface CustomTabBarProps {
   };
 }
 
+/**
+ * Detail pages, and the tab each one belongs to.
+ *
+ * These routes are registered with `href: null` so they get no tab of their
+ * own — but a bar with nothing lit reads as "you are nowhere", so while one is
+ * open its parent list stays selected.
+ */
+const DETAIL_PAGE_OWNERS: Record<string, string> = {
+  'tea-item': 'item-averages',
+  factory: 'market',
+};
+
 function CustomTabBar({ state, navigation }: CustomTabBarProps) {
   const { width } = useWindowDimensions();
   const isDesktop = Platform.OS === 'web' && width >= 768;
@@ -51,13 +63,12 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
         {tabRoutes.map((tab) => {
           const routeObj = state.routes.find((r: { name: string }) => r.name === tab.name);
           const routeIndex = state.routes.findIndex((r: { name: string }) => r.name === tab.name);
-          // A grade's own page has no tab of its own; it belongs to Item Prices,
-          // so that entry stays lit rather than leaving the bar with nothing
-          // selected while you are reading a grade.
+          // A detail page has no tab of its own; it belongs to the list it was
+          // opened from, so that entry stays lit rather than leaving the bar
+          // with nothing selected while you are reading one row.
           const activeName = state.routes[state.index]?.name;
-          const isFocused =
-            state.index === routeIndex ||
-            (activeName === 'tea-item' && tab.name === 'item-averages');
+          const ownerTab = DETAIL_PAGE_OWNERS[activeName ?? ''];
+          const isFocused = state.index === routeIndex || ownerTab === tab.name;
           const IconComponent = tab.icon;
           const iconColor = isFocused ? Colors.primary : Colors.textSecondary;
 
@@ -133,6 +144,7 @@ export default function DashboardLayout() {
       <Tabs.Screen name="reports" options={{ title: 'History' }} />
       {/* Reached by tapping a grade, not from the bar — hence no tabRoutes entry. */}
       <Tabs.Screen name="tea-item" options={{ title: 'Tea Item', href: null }} />
+      <Tabs.Screen name="factory" options={{ title: 'Factory', href: null }} />
     </Tabs>
   );
 }

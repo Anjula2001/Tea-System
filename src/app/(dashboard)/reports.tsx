@@ -10,6 +10,7 @@ import { ChartIcon } from '@/components/ui-icons';
 import { formatAuctionDate, formatRs, formatSignedRs } from '@/domain/averaging';
 import {
   periodsInRange,
+  selectActiveExternalFactories,
   selectExternalResultsForPeriod,
   selectMarketAverage,
   selectOurBulkAverage,
@@ -33,7 +34,10 @@ type Filter = 'all' | 'above' | 'below';
 export default function ReportsScreen() {
   const { ready, gate } = useLoadedStore();
   const state = useTeaStore();
-  const { sellingPeriods, externalFactories } = state;
+  const { sellingPeriods } = state;
+  // The same factories the benchmark counts — a retired one is left out of
+  // the market average, so listing it here would not add up.
+  const externalFactories = selectActiveExternalFactories(state);
   const teaItems = selectActiveTeaItems(state);
   const setRange = useTeaStore((s) => s.setRange);
   const resetRange = useTeaStore((s) => s.resetRange);

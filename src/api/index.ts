@@ -39,9 +39,14 @@ export const api = {
   },
 
   externalFactories: {
-    list: () => http.get<ExternalFactory[]>('/external-factories'),
+    list: (includeInactive = false) =>
+      http.get<ExternalFactory[]>(`/external-factories?includeInactive=${includeInactive}`),
     create: (body: { code: string; name: string; region?: string | null }) =>
       http.post<ExternalFactory>('/external-factories', body),
+    update: (id: string, body: { code?: string; name?: string; region?: string | null }) =>
+      http.patch<ExternalFactory>(`/external-factories/${id}`, body),
+    /** Only succeeds while the factory has no results on file; 409 otherwise. */
+    remove: (id: string) => http.delete<void>(`/external-factories/${id}`),
     setActive: (id: string, active: boolean) =>
       http.patch<ExternalFactory>(`/external-factories/${id}/active`, { active }),
   },

@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { ScrollView, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,6 +12,7 @@ import { formatAuctionDate, formatPercent, formatRs } from '@/domain/averaging';
 import type { DateRange } from '@/domain/types';
 import {
   periodsInRange,
+  selectActiveExternalFactories,
   selectExternalResultsForPeriod,
   selectFactoryPriceBreakdown,
   selectMarketPerPeriod,
@@ -35,8 +37,12 @@ import {
  */
 export default function MarketScreen() {
   const { ready, gate } = useLoadedStore();
+  const router = useRouter();
   const state = useTeaStore();
-  const { externalFactories, sellingPeriods } = state;
+  const { sellingPeriods } = state;
+  // Retired factories still appear in the list, to be found and managed; only
+  // the active ones are offered a price box or counted in the benchmark.
+  const externalFactories = selectActiveExternalFactories(state);
   const recordExternalResults = useTeaStore((s) => s.recordExternalResults);
   const addExternalFactory = useTeaStore((s) => s.addExternalFactory);
   const saving = useTeaStore((s) => s.saving);
@@ -57,7 +63,8 @@ export default function MarketScreen() {
   const [fromDraft, setFromDraft] = useState('');
   const [toDraft, setToDraft] = useState('');
   const [rangeError, setRangeError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'retired'>('all');
 
   const applied = range ?? bounds;
   const fromValue = fromDraft || applied.from;
@@ -68,7 +75,6 @@ export default function MarketScreen() {
     setFromDraft(next.from);
     setToDraft(next.to);
     setRangeError(null);
-    setExpanded(null);
   };
 
   const applyTyped = () => {
@@ -179,6 +185,25 @@ export default function MarketScreen() {
   };
 
   const factories = selectFactoryPriceBreakdown(state, applied);
+
+  /**
+   * Searching matches code, name and region together, because people reach for
+   * whichever they remember — "MP-02", "Mountain" and "Dimbula" should all find
+   * the same row. Case- and space-insensitive, so a pasted code still lands.
+   *
+   * This narrows the list only. The benchmark below is computed from every
+   * factory, because a search is a way of finding a row, not of redefining the
+   * market.
+   */
+  const needle = query.trim().toLowerCase();
+  const visibleFactories = factories.filter((row) => {
+    if (statusFilter === 'active' && !row.active) return false;
+    if (statusFilter === 'retired' && row.active) return false;
+    if (needle === '') return true;
+    return [row.code, row.name, row.region ?? ''].join(' ').toLowerCase().includes(needle);
+  });
+  const filtering = needle !== '' || statusFilter !== 'all';
+  const retiredCount = factories.filter((row) => !row.active).length;
   const perPeriod = selectMarketPerPeriod(state, applied);
   const periods = periodsInRange(state, applied);
 
@@ -303,8 +328,8 @@ export default function MarketScreen() {
               <Text style={styles.sectionTitle}>Average price per factory</Text>
               <Text style={styles.sectionSubtitle}>
                 One blended figure per factory per auction, read from the published reports. They
-                differ because each factory sold a different mix. Tap a row for the sales behind
-                the average.
+                differ because each factory sold a different mix. Tap a factory for its own chart,
+                every result behind the average, and its record.
               </Text>
             </View>
             <Pressable style={styles.addToggle} onPress={() => setShowAdd((on) => !on)}>
@@ -356,74 +381,123 @@ export default function MarketScreen() {
             </View>
           )}
 
-          <View style={styles.table}>
-            <View style={styles.tableHeader}>
-              <Text style={[styles.th, styles.colItem]}>Factory</Text>
-              <Text style={[styles.th, styles.colNum]}>Auctions</Text>
-              <Text style={[styles.th, styles.colNum]}>Low</Text>
-              <Text style={[styles.th, styles.colNum]}>High</Text>
-              <Text style={[styles.th, styles.colNum]}>Average</Text>
+          {/* Finding a factory */}
+          <View style={styles.searchRow}>
+            <View style={styles.searchField}>
+              <TextInput
+                style={styles.searchInput}
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search code, name or region…"
+                placeholderTextColor={Colors.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {query !== '' && (
+                <Pressable style={styles.clearButton} onPress={() => setQuery('')}>
+                  <Text style={styles.clearButtonText}>Clear</Text>
+                </Pressable>
+              )}
             </View>
 
-            {factories.map((row) => {
-              const open = expanded === row.externalFactoryId;
-              const hasData = row.periodsCounted > 0;
-
-              return (
-                <View key={row.externalFactoryId}>
+            <View style={styles.filterRow}>
+              {(['all', 'active', 'retired'] as const).map((option) => {
+                const on = statusFilter === option;
+                return (
                   <Pressable
-                    style={[styles.tableRow, open && styles.tableRowOpen]}
-                    onPress={() => hasData && setExpanded(open ? null : row.externalFactoryId)}>
-                    <View style={styles.colItem}>
-                      <Text style={styles.tdBold}>{row.code}</Text>
-                      <Text style={styles.tdMuted}>
-                        {row.name}
-                        {row.region ? ` · ${row.region}` : ''}
-                      </Text>
-                    </View>
-                    <Text style={[styles.tdText, styles.colNum]}>
-                      {hasData ? row.periodsCounted : '—'}
-                    </Text>
-                    <Text style={[styles.tdText, styles.colNum]}>
-                      {formatRs(row.lowestPricePerKg)}
-                    </Text>
-                    <Text style={[styles.tdText, styles.colNum]}>
-                      {formatRs(row.highestPricePerKg)}
-                    </Text>
-                    <Text style={[styles.tdBold, styles.colNum, styles.average]}>
-                      {formatRs(row.averagePricePerKg)}
+                    key={option}
+                    style={[styles.filterPill, on && styles.filterPillActive]}
+                    onPress={() => setStatusFilter(option)}>
+                    <Text style={[styles.filterPillText, on && styles.filterPillTextActive]}>
+                      {option === 'all' ? 'All' : option === 'active' ? 'Active' : 'Retired'}
                     </Text>
                   </Pressable>
-
-                  {open && (
-                    <View style={styles.detail}>
-                      {row.points.map((point) => (
-                        <View key={point.sellingPeriodId} style={styles.detailRow}>
-                          <Text style={styles.detailLabel}>
-                            {point.label} · {formatAuctionDate(point.auctionDate)}
-                          </Text>
-                          <Text style={styles.detailValue}>Rs. {formatRs(point.pricePerKg)}</Text>
-                        </View>
-                      ))}
-                      <Text style={styles.detailFoot}>
-                        Latest: {row.latestPeriodLabel ?? '—'} at Rs.{' '}
-                        {formatRs(row.latestPricePerKg)}
-                        {row.latestAgainstAverage.verdict === 'unknown'
-                          ? ''
-                          : ` — ${formatPercent(
-                              row.latestAgainstAverage.differencePercent === null
-                                ? null
-                                : Math.abs(row.latestAgainstAverage.differencePercent),
-                            )} ${
-                              row.latestAgainstAverage.verdict === 'below' ? 'below' : 'above'
-                            } its own period average.`}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              );
-            })}
+                );
+              })}
+            </View>
           </View>
+
+          <Text style={styles.resultCount}>
+            {filtering
+              ? `${visibleFactories.length} of ${factories.length} factor${
+                  factories.length === 1 ? 'y' : 'ies'
+                }`
+              : `${factories.length} factor${factories.length === 1 ? 'y' : 'ies'}`}
+            {retiredCount > 0
+              ? ` · ${retiredCount} retired, left out of the benchmark above`
+              : ''}
+          </Text>
+
+          {visibleFactories.length > 0 ? (
+            <View style={styles.table}>
+              <View style={styles.tableHeader}>
+                <Text style={[styles.th, styles.colItem]}>Factory</Text>
+                <Text style={[styles.th, styles.colNum]}>Auctions</Text>
+                <Text style={[styles.th, styles.colNum]}>Low</Text>
+                <Text style={[styles.th, styles.colNum]}>High</Text>
+                <Text style={[styles.th, styles.colNum]}>Average</Text>
+              </View>
+
+              {visibleFactories.map((row) => (
+                <Pressable
+                  key={row.externalFactoryId}
+                  style={styles.tableRow}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/factory',
+                      params: { id: row.externalFactoryId },
+                    })
+                  }>
+                  <View style={styles.colItem}>
+                    <View style={styles.codeRow}>
+                      <Text style={styles.tdBold}>{row.code}</Text>
+                      {!row.active && <Text style={styles.retiredTag}>retired</Text>}
+                    </View>
+                    <Text style={styles.tdMuted}>
+                      {row.name}
+                      {row.region ? ` · ${row.region}` : ''}
+                    </Text>
+                  </View>
+                  <Text style={[styles.tdText, styles.colNum]}>
+                    {row.periodsCounted > 0 ? row.periodsCounted : '—'}
+                  </Text>
+                  <Text style={[styles.tdText, styles.colNum]}>
+                    {formatRs(row.lowestPricePerKg)}
+                  </Text>
+                  <Text style={[styles.tdText, styles.colNum]}>
+                    {formatRs(row.highestPricePerKg)}
+                  </Text>
+                  <Text style={[styles.tdBold, styles.colNum, styles.average]}>
+                    {formatRs(row.averagePricePerKg)}
+                  </Text>
+                  <Text style={styles.chevron}>›</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.emptyBlock}>
+              <Text style={styles.emptyNote}>
+                {needle === ''
+                  ? `No ${statusFilter} factories.`
+                  : `Nothing matches “${query.trim()}”.`}
+              </Text>
+              {needle !== '' && (
+                <Pressable
+                  style={styles.addToggle}
+                  onPress={() => {
+                    setNewCode(query.trim().toUpperCase());
+                    setNewName('');
+                    setNewRegion('');
+                    setShowAdd(true);
+                  }}>
+                  <PlusIcon color={Colors.primary} size={14} />
+                  <Text style={styles.addToggleText}>
+                    Add “{query.trim()}” as a new factory
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+          )}
         </View>
 
         {/* The benchmark, auction by auction */}
@@ -703,26 +777,56 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
     gap: 8,
   },
-  tableRowOpen: { backgroundColor: Colors.accentLight },
   colItem: { flex: 2.2 },
   colNum: { flex: 1.1, textAlign: 'right' },
   tdBold: { fontSize: 13, fontWeight: '600', color: Colors.text },
   tdText: { fontSize: 12, color: Colors.textSecondary },
   tdMuted: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },
   average: { fontSize: 14, color: '#B8860B' },
-
-  detail: {
-    backgroundColor: '#FFFDF5',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    gap: 6,
+  codeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  retiredTag: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#8A6D1F',
+    backgroundColor: Colors.accentLight,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    overflow: 'hidden',
   },
-  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  detailLabel: { flex: 1, fontSize: 12, color: Colors.textSecondary },
-  detailValue: { fontSize: 12, fontWeight: '700', color: Colors.text, minWidth: 90, textAlign: 'right' },
-  detailFoot: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16, marginTop: 4 },
+  chevron: { fontSize: 20, color: Colors.textSecondary, marginLeft: 2, width: 12, textAlign: 'right' },
+
+  searchRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
+  searchField: {
+    flexGrow: 1,
+    flexBasis: 220,
+    minWidth: 180,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+  },
+  searchInput: { flex: 1, minWidth: 0, paddingVertical: 10, fontSize: 14, color: Colors.text },
+  clearButton: { paddingHorizontal: 6, paddingVertical: 4 },
+  clearButtonText: { fontSize: 12, fontWeight: '600', color: Colors.primary },
+  filterRow: { flexDirection: 'row', gap: 6 },
+  filterPill: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: Colors.background,
+  },
+  filterPillActive: { backgroundColor: Colors.primaryLight, borderColor: Colors.primary },
+  filterPillText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
+  filterPillTextActive: { color: Colors.primary },
+  resultCount: { fontSize: 11, color: Colors.textSecondary, marginTop: -6 },
+  emptyBlock: { alignItems: 'flex-start', gap: 10, paddingVertical: 14 },
+  emptyNote: { fontSize: 13, color: Colors.textSecondary },
 
   inputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
   inputCell: { flexGrow: 1, flexBasis: 210, minWidth: 190, maxWidth: 300, gap: 4 },

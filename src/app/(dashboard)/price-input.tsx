@@ -30,6 +30,7 @@ import {
   selectActiveTeaItems,
   selectLatestBulkSet,
   selectPlanVersusOutcome,
+  selectActiveExternalFactories,
   selectExternalResultsForPeriod,
   selectOurBulkForPeriod,
   selectOurItemHistoryBeforePeriod,
@@ -62,7 +63,11 @@ export default function AuctionResultsScreen() {
   const { ready, gate } = useLoadedStore();
   const { width } = useWindowDimensions();
   const state = useTeaStore();
-  const { externalFactories, sellingPeriods } = state;
+  const { sellingPeriods } = state;
+  // Retired factories stay in the cache to be managed on Market, but they no
+  // longer count toward the benchmark, so a price box here would collect a
+  // figure that goes nowhere.
+  const externalFactories = selectActiveExternalFactories(state);
   // Retired grades stay in the cache to be managed on Item Prices, but nothing
   // new should be priced against one.
   const teaItems = selectActiveTeaItems(state);

@@ -13,7 +13,10 @@ export interface PricePoint {
 }
 
 /**
- * One grade's price, auction by auction.
+ * One series' price, auction by auction — a tea grade of ours, or another
+ * factory's published bulk figure. The shape of the question is the same, so
+ * the chart is; only the caller knows what to call the subject, which is why
+ * the empty state is a prop.
  *
  * A single series, so there is no legend: the caller's heading names the grade,
  * and a legend box for one line is noise. The dashed rule is the period average
@@ -32,9 +35,11 @@ export interface PricePoint {
 export default function PriceChart({
   points,
   averagePricePerKg,
+  emptyMessage = 'Nothing recorded in the chosen period.',
 }: {
   points: readonly PricePoint[];
   averagePricePerKg: number | null;
+  emptyMessage?: string;
 }) {
   const width = 720;
   const height = 260;
@@ -46,9 +51,7 @@ export default function PriceChart({
   if (points.length === 0) {
     return (
       <View style={styles.empty}>
-        <Text style={styles.emptyText}>
-          No sale recorded for this grade in the chosen period.
-        </Text>
+        <Text style={styles.emptyText}>{emptyMessage}</Text>
       </View>
     );
   }

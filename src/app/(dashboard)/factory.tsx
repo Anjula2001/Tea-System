@@ -10,34 +10,42 @@ import Header from '@/components/header';
 import PriceChart from '@/components/price-chart';
 import { formatAuctionDate, formatPercent, formatRs } from '@/domain/averaging';
 import type { DateRange } from '@/domain/types';
-import { periodsInRange, selectItemPriceBreakdown, useTeaStore } from '@/store/tea-store';
+import {
+  periodsInRange,
+  selectFactoryPriceBreakdown,
+  selectMarketPerPeriod,
+  useTeaStore,
+} from '@/store/tea-store';
 
 /**
- * One grade, in full: how its price has moved, and everything you can change
- * about it.
+ * One other factory, in full: how its published price has moved, and
+ * everything you can change about its record.
  *
- * Split out from the list on purpose. The list answers "what is each grade
- * worth?", which wants every grade on screen at once; this answers "what is
- * happening to THIS grade, and is its record right?", which wants room for a
- * chart and an edit form. Cramming both into an expanding row made each of them
- * worse.
+ * The twin of the tea item page, and deliberately so — the question is the
+ * same shape ("what is happening to THIS one?") even though the data is not.
+ * Where they part company is the comparison: a grade is judged against its own
+ * past, while a factory is judged against the market it sits in, so this table
+ * carries a "vs market" column the grade page has no use for.
  *
- * The period is local to this screen, as on the list — asking what BOP did last
- * quarter must not re-base the planning forecast.
+ * There is no per-grade view here and never will be: other factories publish
+ * one blended figure and nothing behind it.
+ *
+ * The period is local to this screen, as on Market — asking what Highland did
+ * last quarter must not re-base the benchmark everywhere else.
  */
-export default function TeaItemScreen() {
+export default function FactoryScreen() {
   const { ready, gate } = useLoadedStore();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
 
   const state = useTeaStore();
   const { sellingPeriods } = state;
-  const updateTeaItem = useTeaStore((s) => s.updateTeaItem);
-  const removeTeaItem = useTeaStore((s) => s.removeTeaItem);
-  const setTeaItemActive = useTeaStore((s) => s.setTeaItemActive);
+  const updateExternalFactory = useTeaStore((s) => s.updateExternalFactory);
+  const removeExternalFactory = useTeaStore((s) => s.removeExternalFactory);
+  const setExternalFactoryActive = useTeaStore((s) => s.setExternalFactoryActive);
   const saving = useTeaStore((s) => s.saving);
 
-  const item = state.teaItems.find((t) => t.id === id) ?? null;
+  const factory = state.externalFactories.find((f) => f.id === id) ?? null;
 
   const sorted = useMemo(
     () => [...sellingPeriods].sort((a, b) => a.auctionDate.localeCompare(b.auctionDate)),
@@ -57,18 +65,18 @@ export default function TeaItemScreen() {
   const [rangeError, setRangeError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [edit, setEdit] = useState({ code: '', name: '', category: '' });
+  const [edit, setEdit] = useState({ code: '', name: '', region: '' });
 
   const applied = range ?? bounds;
   const fromValue = fromDraft || applied.from;
   const toValue = toDraft || applied.to;
 
-  // Seeded when the grade arrives, not in useState — the cache fills after the
-  // first render, so an initialiser would only ever see an empty catalogue.
+  // Seeded when the factory arrives, not in useState — the cache fills after
+  // the first render, so an initialiser would only ever see an empty list.
   useEffect(() => {
-    if (!item) return;
-    setEdit({ code: item.code, name: item.name, category: item.category ?? '' });
-  }, [item?.id, item?.code, item?.name, item?.category]);
+    if (!factory) return;
+    setEdit({ code: factory.code, name: factory.name, region: factory.region ?? '' });
+  }, [factory?.id, factory?.code, factory?.name, factory?.region]);
 
   const apply = (next: DateRange) => {
     setRange(next);
@@ -103,8 +111,13 @@ export default function TeaItemScreen() {
     ].filter((p): p is { label: string; value: DateRange } => p.value !== null);
   }, [sorted, bounds]);
 
-  const row = selectItemPriceBreakdown(state, applied).find((r) => r.teaItemId === id) ?? null;
+  const row = selectFactoryPriceBreakdown(state, applied).find((r) => r.externalFactoryId === id) ?? null;
   const periods = periodsInRange(state, applied);
+  // The benchmark auction by auction, so each sale can be read against the
+  // market of its own week rather than a whole-period average.
+  const marketByPeriod = new Map(
+    selectMarketPerPeriod(state, applied).map((p) => [p.sellingPeriodId, p.averagePricePerKg]),
+  );
 
   const report = (error: unknown, verb: string) =>
     setNotice({
@@ -116,16 +129,16 @@ export default function TeaItemScreen() {
     });
 
   const saveEdit = async () => {
-    if (!item) return;
+    if (!factory) return;
     if (edit.code.trim() === '' || edit.name.trim() === '') {
-      setNotice({ text: 'A grade needs both a code and a name.', tone: 'error' });
+      setNotice({ text: 'A factory needs both a code and a name.', tone: 'error' });
       return;
     }
     try {
-      const saved = await updateTeaItem(item.id, {
+      const saved = await updateExternalFactory(factory.id, {
         code: edit.code.trim(),
         name: edit.name.trim(),
-        category: edit.category.trim() === '' ? null : edit.category.trim(),
+        region: edit.region.trim() === '' ? null : edit.region.trim(),
       });
       setNotice({ text: `Saved ${saved.code} — ${saved.name}.`, tone: 'ok' });
     } catch (error) {
@@ -134,13 +147,13 @@ export default function TeaItemScreen() {
   };
 
   const toggleActive = async () => {
-    if (!item) return;
+    if (!factory) return;
     try {
-      await setTeaItemActive(item.id, !item.active);
+      await setExternalFactoryActive(factory.id, !factory.active);
       setNotice({
-        text: item.active
-          ? `${item.code} retired. Its history stays on file; it just will not be offered for new prices or bulk sets.`
-          : `${item.code} is active again and will appear on the entry screens.`,
+        text: factory.active
+          ? `${factory.code} retired. Its results stay on file, but it no longer counts toward the market average.`
+          : `${factory.code} counts toward the market average again.`,
         tone: 'ok',
       });
     } catch (error) {
@@ -148,11 +161,11 @@ export default function TeaItemScreen() {
     }
   };
 
-  const deleteGrade = async () => {
-    if (!item) return;
+  const deleteFactory = async () => {
+    if (!factory) return;
     try {
-      await removeTeaItem(item.id);
-      router.replace('/item-averages');
+      await removeExternalFactory(factory.id);
+      router.replace('/market');
     } catch (error) {
       setConfirmDelete(false);
       report(error, 'Not deleted');
@@ -161,13 +174,13 @@ export default function TeaItemScreen() {
 
   if (!ready) return gate;
 
-  if (!item) {
+  if (!factory) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.missing}>
-          <Text style={styles.missingTitle}>That grade is no longer on file.</Text>
-          <Pressable style={styles.applyButton} onPress={() => router.replace('/item-averages')}>
-            <Text style={styles.applyButtonText}>Back to Item Prices</Text>
+          <Text style={styles.missingTitle}>That factory is no longer on file.</Text>
+          <Pressable style={styles.applyButton} onPress={() => router.replace('/market')}>
+            <Text style={styles.applyButtonText}>Back to Market</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -177,8 +190,8 @@ export default function TeaItemScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <Header
-        greeting={item.code}
-        subTitle={`${item.name}${item.category ? ` · ${item.category}` : ''}`}
+        greeting={factory.code}
+        subTitle={`${factory.name}${factory.region ? ` · ${factory.region}` : ''}`}
         notificationCount={0}
       />
 
@@ -187,8 +200,8 @@ export default function TeaItemScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
 
-        <Pressable style={styles.backLink} onPress={() => router.push('/item-averages')}>
-          <Text style={styles.backLinkText}>← All tea items</Text>
+        <Pressable style={styles.backLink} onPress={() => router.push('/market')}>
+          <Text style={styles.backLinkText}>← All factories</Text>
         </Pressable>
 
         {notice && (
@@ -199,11 +212,11 @@ export default function TeaItemScreen() {
           </View>
         )}
 
-        {!item.active && (
+        {!factory.active && (
           <View style={styles.retiredBanner}>
             <Text style={styles.retiredBannerText}>
-              {item.code} is retired. Its past sales still count toward history and averages, but
-              it is not offered for new prices or bulk sets.
+              {factory.code} is retired. Its results stay on file and are still shown here, but it
+              is left out of the market average and is not offered when recording an auction.
             </Text>
           </View>
         )}
@@ -270,7 +283,7 @@ export default function TeaItemScreen() {
 
         {/* How the price moved */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>How {item.code} has moved</Text>
+          <Text style={styles.sectionTitle}>How {factory.code} has moved</Text>
           <Text style={styles.sectionSubtitle}>
             {row && row.periodsCounted > 0
               ? `${row.periodsCounted} auction${
@@ -281,15 +294,15 @@ export default function TeaItemScreen() {
                   row.lowestPricePerKg,
                   0,
                 )}–${formatRs(row.highestPricePerKg, 0)}, not anchored at zero.`
-              : `No sale recorded between ${formatAuctionDate(applied.from)} and ${formatAuctionDate(
-                  applied.to,
-                )}.`}
+              : `No result recorded between ${formatAuctionDate(
+                  applied.from,
+                )} and ${formatAuctionDate(applied.to)}.`}
           </Text>
 
           <PriceChart
             points={row?.points ?? []}
             averagePricePerKg={row?.averagePricePerKg ?? null}
-            emptyMessage="No sale recorded for this grade in the chosen period."
+            emptyMessage="No result recorded for this factory in the chosen period."
           />
 
           <View style={styles.statRow}>
@@ -312,14 +325,14 @@ export default function TeaItemScreen() {
 
           {row && row.latestAgainstAverage.verdict !== 'unknown' && (
             <Text style={styles.trendNote}>
-              The latest sale, {row.latestPeriodLabel}, came in{' '}
+              The latest result, {row.latestPeriodLabel}, came in{' '}
               {formatPercent(
                 row.latestAgainstAverage.differencePercent === null
                   ? null
                   : Math.abs(row.latestAgainstAverage.differencePercent),
               )}{' '}
-              {row.latestAgainstAverage.verdict === 'below' ? 'below' : 'above'} the period average
-              of Rs. {formatRs(row.averagePricePerKg)}.
+              {row.latestAgainstAverage.verdict === 'below' ? 'below' : 'above'} its own period
+              average of Rs. {formatRs(row.averagePricePerKg)}.
             </Text>
           )}
         </View>
@@ -327,18 +340,25 @@ export default function TeaItemScreen() {
         {/* The figures behind the chart */}
         {row && row.points.length > 0 && (
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Every sale in this period</Text>
+            <Text style={styles.sectionTitle}>Every result in this period</Text>
             <View style={styles.table}>
               <View style={styles.tableHeader}>
                 <Text style={[styles.th, styles.colItem]}>Auction</Text>
                 <Text style={[styles.th, styles.colNum]}>Price /kg</Text>
-                <Text style={[styles.th, styles.colNum]}>vs average</Text>
+                <Text style={[styles.th, styles.colNum]}>vs own avg</Text>
+                <Text style={[styles.th, styles.colNum]}>vs market</Text>
               </View>
               {row.points.map((point) => {
-                const gap =
+                const ownGap =
                   row.averagePricePerKg === null
                     ? null
                     : Math.round((point.pricePerKg - row.averagePricePerKg) * 100) / 100;
+                const market = marketByPeriod.get(point.sellingPeriodId) ?? null;
+                const marketGap =
+                  market === null
+                    ? null
+                    : Math.round((point.pricePerKg - market) * 100) / 100;
+
                 return (
                   <View key={point.sellingPeriodId} style={styles.tableRow}>
                     <View style={styles.colItem}>
@@ -348,38 +368,28 @@ export default function TeaItemScreen() {
                     <Text style={[styles.tdBold, styles.colNum]}>
                       {formatRs(point.pricePerKg)}
                     </Text>
-                    <Text
-                      style={[
-                        styles.tdBold,
-                        styles.colNum,
-                        {
-                          color:
-                            gap === null || gap === 0
-                              ? Colors.textSecondary
-                              : gap > 0
-                                ? Colors.above
-                                : Colors.below,
-                        },
-                      ]}>
-                      {gap === null ? '—' : `${gap > 0 ? '+' : ''}${formatRs(gap)}`}
-                    </Text>
+                    <GapCell gap={ownGap} />
+                    <GapCell gap={marketGap} />
                   </View>
                 );
               })}
             </View>
             <Text style={styles.footNote}>
               {periods.length} auction{periods.length === 1 ? '' : 's'} fall in this period;{' '}
-              {row.periodsCounted} recorded a price for {item.code}.
+              {row.periodsCounted} recorded a result for {factory.code}. &ldquo;vs market&rdquo; is
+              against the flat average of every factory reporting that week — which includes this
+              one, so a lone reporter always reads as level.
             </Text>
           </View>
         )}
 
-        {/* Editing the grade */}
+        {/* Editing the factory */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Edit grade</Text>
+          <Text style={styles.sectionTitle}>Edit factory</Text>
           <Text style={styles.sectionSubtitle}>
-            Renaming relabels every past sale of this grade, because they point at it rather than
-            at its code. Right for a typo; to split one grade in two, add a new grade instead.
+            Renaming relabels every result already on file, because they point at this record
+            rather than at its code. Right for a typo; if this is really a different factory, add a
+            new one instead.
           </Text>
 
           <View style={styles.editForm}>
@@ -402,11 +412,11 @@ export default function TeaItemScreen() {
               />
             </View>
             <View style={styles.editField}>
-              <Text style={styles.fieldLabel}>CATEGORY</Text>
+              <Text style={styles.fieldLabel}>REGION</Text>
               <TextInput
                 style={styles.textInput}
-                value={edit.category}
-                onChangeText={(category) => setEdit((e) => ({ ...e, category }))}
+                value={edit.region}
+                onChangeText={(region) => setEdit((e) => ({ ...e, region }))}
                 placeholder="none"
                 placeholderTextColor={Colors.textSecondary}
               />
@@ -423,7 +433,7 @@ export default function TeaItemScreen() {
 
             <Pressable style={styles.outlineButton} disabled={saving} onPress={toggleActive}>
               <Text style={styles.outlineButtonText}>
-                {item.active ? 'Retire' : 'Reinstate'}
+                {factory.active ? 'Retire' : 'Reinstate'}
               </Text>
             </Pressable>
 
@@ -432,7 +442,7 @@ export default function TeaItemScreen() {
                 <Pressable
                   style={[styles.dangerButton, saving && styles.busy]}
                   disabled={saving}
-                  onPress={deleteGrade}>
+                  onPress={deleteFactory}>
                   <Text style={styles.dangerButtonText}>
                     {saving ? 'Deleting…' : 'Yes, delete'}
                   </Text>
@@ -449,12 +459,34 @@ export default function TeaItemScreen() {
           </View>
 
           <Text style={styles.footNote}>
-            Deleting only works while nothing depends on this grade. Once it has been priced or put
-            in a bulk set it is part of the record, and the API will say so — retire it instead.
+            Deleting only works while this factory has no results on file. Once it has reported, it
+            is part of every benchmark that counted it, and the API will say so — retire it
+            instead, which stops it counting without touching what is recorded.
           </Text>
         </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/** A signed gap, tinted by direction; '—' when there is nothing to compare to. */
+function GapCell({ gap }: { gap: number | null }) {
+  return (
+    <Text
+      style={[
+        styles.tdBold,
+        styles.colNum,
+        {
+          color:
+            gap === null || gap === 0
+              ? Colors.textSecondary
+              : gap > 0
+                ? Colors.above
+                : Colors.below,
+        },
+      ]}>
+      {gap === null ? '—' : `${gap > 0 ? '+' : ''}${formatRs(gap)}`}
+    </Text>
   );
 }
 

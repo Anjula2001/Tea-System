@@ -323,13 +323,16 @@ function MetricCard({
         <Text style={styles.cardLabel}>{label}</Text>
         <View style={[styles.iconBox, { backgroundColor: tint }]}>{icon}</View>
       </View>
-      {badge}
       <Text style={styles.metricValue}>
         {value.startsWith('+') || value.startsWith('−') || value === '—' ? '' : 'Rs. '}
         {value}
         {unit ? <Text style={styles.unitText}> {unit}</Text> : null}
       </Text>
       <Text style={styles.subtext}>{caption}</Text>
+      {/* Last, and pinned to the floor: only one card carries a badge, and
+          above the figure it pushed that card's number a row below every
+          other card's. Down here it fills slack the neighbours already had. */}
+      {badge ? <View style={styles.cardBadge}>{badge}</View> : null}
     </View>
   );
 }
@@ -371,6 +374,7 @@ const styles = StyleSheet.create({
   },
   iconBox: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   metricValue: { fontSize: 22, fontWeight: '700', color: Colors.text },
+  cardBadge: { marginTop: 'auto', paddingTop: 2, flexDirection: 'row' },
   unitText: { fontSize: 13, fontWeight: '500', color: Colors.textSecondary },
   subtext: { fontSize: 11, color: Colors.textSecondary },
 

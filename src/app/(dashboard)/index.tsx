@@ -39,7 +39,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const { ready, gate } = useLoadedStore();
   const state = useTeaStore();
-  const { range } = state;
+  const { range, factoryProfile: profile } = state;
 
   const ourBulk = selectOurBulkAverage(state, range);
   const market = selectMarketAverage(state, range);
@@ -69,7 +69,7 @@ export default function DashboardScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <Header
-        greeting="Green Valley Tea Factory"
+        greeting={profile?.name ?? 'Loading…'}
         subTitle={
           upcoming
             ? `Preparing for ${upcoming.label} · ${formatAuctionDate(upcoming.auctionDate)}`

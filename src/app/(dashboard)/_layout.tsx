@@ -3,6 +3,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable, useWindowDimensions, Platform } from 'react-native';
 import { Colors } from '@/constants/colors';
 import { HomeIcon, MoneyIcon, PlusIcon, ChartIcon, LeafIcon, WalletIcon } from '@/components/ui-icons';
+import type { FactoryProfile } from '@/domain/types';
 import { selectUpcomingPeriod, useTeaStore } from '@/store/tea-store';
 
 interface CustomTabBarProps {
@@ -26,12 +27,29 @@ interface CustomTabBarProps {
 const DETAIL_PAGE_OWNERS: Record<string, string> = {
   'tea-item': 'item-averages',
   factory: 'market',
+  // Our own factory belongs to no list, so it sits under the Dashboard.
+  profile: 'index',
 };
+
+/**
+ * "Green Valley Tea Factory" under a short name of "Green Valley" leaves
+ * "Tea Factory" for the second line — the descriptor, without repeating the
+ * name above it. A name that does not start with the short name has no
+ * descriptor to give, so the region stands in.
+ */
+function brandSuffix(profile: FactoryProfile | null): string {
+  if (!profile) return '';
+  const rest = profile.name.startsWith(profile.shortName)
+    ? profile.name.slice(profile.shortName.length).trim()
+    : '';
+  return rest || profile.region || '';
+}
 
 function CustomTabBar({ state, navigation }: CustomTabBarProps) {
   const { width } = useWindowDimensions();
   const isDesktop = Platform.OS === 'web' && width >= 768;
   const upcoming = useTeaStore(selectUpcomingPeriod);
+  const profile = useTeaStore((s) => s.factoryProfile);
 
   const tabRoutes = [
     { name: 'index', label: 'Dashboard', icon: HomeIcon },
@@ -51,8 +69,8 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
             <LeafIcon color="#FFFFFF" size={20} />
           </View>
           <View>
-            <Text style={styles.brandTitle}>Green Valley</Text>
-            <Text style={styles.brandSubtitle}>Tea Factory</Text>
+            <Text style={styles.brandTitle}>{profile?.shortName ?? '…'}</Text>
+            <Text style={styles.brandSubtitle}>{brandSuffix(profile)}</Text>
           </View>
         </View>
       )}
@@ -106,15 +124,19 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
       {/* Factory Footer Card on Desktop Sidebar */}
       {isDesktop && (
         <View style={styles.sidebarFooter}>
-          <View style={styles.factoryCard}>
+          <Pressable
+            style={styles.factoryCard}
+            onPress={() => navigation.navigate('profile')}>
             <View style={styles.statusDot} />
             <View style={styles.factoryTextGroup}>
-              <Text style={styles.factoryName}>Nuwara Eliya</Text>
+              <Text style={styles.factoryName}>
+                {profile?.region ?? profile?.shortName ?? '—'}
+              </Text>
               <Text style={styles.factoryMeta} numberOfLines={1}>
                 {upcoming ? `Next: ${upcoming.label}` : 'No auction scheduled'}
               </Text>
             </View>
-          </View>
+          </Pressable>
         </View>
       )}
     </View>
@@ -145,6 +167,7 @@ export default function DashboardLayout() {
       {/* Reached by tapping a grade, not from the bar — hence no tabRoutes entry. */}
       <Tabs.Screen name="tea-item" options={{ title: 'Tea Item', href: null }} />
       <Tabs.Screen name="factory" options={{ title: 'Factory', href: null }} />
+      <Tabs.Screen name="profile" options={{ title: 'Our Factory', href: null }} />
     </Tabs>
   );
 }

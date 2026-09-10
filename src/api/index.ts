@@ -3,6 +3,7 @@ import type {
   BulkSetWithItems,
   ExternalFactory,
   ExternalFactoryResult,
+  FactoryProfile,
   OurBulkResult,
   OurItemPrice,
   SellingPeriod,
@@ -19,6 +20,14 @@ import { http } from './client';
  */
 
 export const api = {
+  /** Us — the one identity here that is not somebody else's factory. */
+  factoryProfile: {
+    get: () => http.get<FactoryProfile>('/factory-profile'),
+    /** No id: there is exactly one profile. */
+    update: (body: { name?: string; shortName?: string; region?: string | null }) =>
+      http.patch<FactoryProfile>('/factory-profile', body),
+  },
+
   teaItems: {
     list: (includeInactive = false) =>
       http.get<TeaItem[]>(`/tea-items?includeInactive=${includeInactive}`),

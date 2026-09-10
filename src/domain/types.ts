@@ -16,6 +16,22 @@ export type SellingPeriodStatus = 'upcoming' | 'sold';
 export type BulkSetStatus = 'draft' | 'pending' | 'sold';
 export type ComparisonVerdict = 'above' | 'below' | 'equal' | 'unknown';
 
+/**
+ * Our own factory's identity. Exactly one exists.
+ *
+ * Every other factory in this app is an `ExternalFactory` row; before this
+ * existed, ours was a string literal in three components, which meant the app
+ * could not be handed to a second factory without editing its source.
+ */
+export interface FactoryProfile {
+  id: string;
+  name: string;
+  shortName: string;
+  region: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TeaItem {
   id: string;
   code: string;

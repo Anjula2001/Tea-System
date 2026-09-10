@@ -11,6 +11,7 @@ import type {
   DateRange,
   ExternalFactory,
   ExternalFactoryResult,
+  FactoryProfile,
   ItemPriceHistory,
   MarketAverage,
   OurBulkResult,
@@ -55,6 +56,8 @@ export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 interface TeaStoreState {
   teaItems: TeaItem[];
+  /** Our own factory. Null only before the first load resolves. */
+  factoryProfile: FactoryProfile | null;
   externalFactories: ExternalFactory[];
   sellingPeriods: SellingPeriod[];
   ourItemPrices: OurItemPrice[];
@@ -115,6 +118,13 @@ interface TeaStoreState {
   removeTeaItem: (id: string) => Promise<void>;
   /** Retire a grade without deleting its history, or bring one back. */
   setTeaItemActive: (id: string, active: boolean) => Promise<void>;
+
+  /** Rename our own factory. */
+  updateFactoryProfile: (patch: {
+    name?: string;
+    shortName?: string;
+    region?: string | null;
+  }) => Promise<FactoryProfile>;
 
   /** Add another factory to the benchmark. */
   addExternalFactory: (input: {
@@ -195,6 +205,7 @@ async function fetchBulkSets(): Promise<BulkSetWithItems[]> {
 }
 
 export const useTeaStore = create<TeaStoreState>((set, get) => ({
+  factoryProfile: null,
   teaItems: [],
   externalFactories: [],
   sellingPeriods: [],
@@ -215,14 +226,16 @@ export const useTeaStore = create<TeaStoreState>((set, get) => ({
     set({ status: 'loading', error: null });
 
     try {
-      const [teaItems, externalFactories, sellingPeriods, bulkSets] = await Promise.all([
-        // Inactive grades come along: they must stay visible to manage, and
-        // every selector that should ignore them already filters on `active`.
-        api.teaItems.list(true),
-        api.externalFactories.list(true),
-        api.sellingPeriods.list(),
-        fetchBulkSets(),
-      ]);
+      const [factoryProfile, teaItems, externalFactories, sellingPeriods, bulkSets] =
+        await Promise.all([
+          api.factoryProfile.get(),
+          // Inactive grades come along: they must stay visible to manage, and
+          // every selector that should ignore them already filters on `active`.
+          api.teaItems.list(true),
+          api.externalFactories.list(true),
+          api.sellingPeriods.list(),
+          fetchBulkSets(),
+        ]);
 
       const facts = await fetchPriceFacts(sellingPeriods);
 
@@ -233,6 +246,7 @@ export const useTeaStore = create<TeaStoreState>((set, get) => ({
         previous.status === 'ready' ? previous.range : fullRange(sellingPeriods);
 
       set({
+        factoryProfile,
         teaItems,
         externalFactories,
         sellingPeriods,
@@ -368,6 +382,17 @@ export const useTeaStore = create<TeaStoreState>((set, get) => ({
     try {
       const item = await api.teaItems.setActive(id, active);
       set((state) => ({ teaItems: state.teaItems.map((t) => (t.id === id ? item : t)) }));
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  updateFactoryProfile: async (patch) => {
+    set({ saving: true });
+    try {
+      const profile = await api.factoryProfile.update(patch);
+      set({ factoryProfile: profile });
+      return profile;
     } finally {
       set({ saving: false });
     }

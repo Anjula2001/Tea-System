@@ -1,23 +1,41 @@
+import { useRouter } from 'expo-router';
 import React from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Colors } from '@/constants/colors';
 import { BellIcon } from '@/components/ui-icons';
+import { useTeaStore } from '@/store/tea-store';
 
+/**
+ * Every screen's top bar.
+ *
+ * `greeting` and `subTitle` are required rather than defaulted: the defaults
+ * used to be one factory's name, which meant a screen that forgot to pass them
+ * silently claimed to belong to somebody else. The same went for
+ * `notificationCount`, which defaulted to 3 and showed a red badge for alerts
+ * that did not exist.
+ *
+ * The avatar is initials drawn from the factory's own name in the database. It
+ * was a photograph of a stranger, loaded from a stock-photo URL on every
+ * render — wrong about who the user is, and broken without a network. Tapping
+ * it opens our factory's record, which is where that name is set.
+ */
 interface HeaderProps {
-  greeting?: string;
-  subTitle?: string;
-  notificationCount?: number;
+  greeting: string;
+  subTitle: string;
+  notificationCount: number;
   onNotificationPress?: () => void;
   onProfilePress?: () => void;
 }
 
 export default function Header({
-  greeting = 'Good Morning, Manager',
-  subTitle = 'Green Valley Tea Factory',
-  notificationCount = 3,
+  greeting,
+  subTitle,
+  notificationCount,
   onNotificationPress,
   onProfilePress,
 }: HeaderProps) {
+  const profile = useTeaStore((s) => s.factoryProfile);
+  const router = useRouter();
   return (
     <View style={styles.headerContainer}>
       <View style={styles.leftContent}>
@@ -41,17 +59,26 @@ export default function Header({
 
         <TouchableOpacity
           style={styles.avatarButton}
-          onPress={onProfilePress}
+          onPress={onProfilePress ?? (() => router.push('/profile'))}
           activeOpacity={0.7}
         >
-          <Image
-            source={{ uri: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80' }}
-            style={styles.avatar}
-          />
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{initials(profile?.shortName)}</Text>
+          </View>
         </TouchableOpacity>
       </View>
     </View>
   );
+}
+
+/** "Green Valley" → "GV"; one word gives one letter; nothing gives a dash. */
+function initials(name: string | null | undefined): string {
+  const words = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '—';
+  return words
+    .slice(0, 2)
+    .map((word) => word[0]!.toUpperCase())
+    .join('');
 }
 
 const styles = StyleSheet.create({
@@ -121,5 +148,9 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
+    backgroundColor: Colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  avatarText: { fontSize: 14, fontWeight: '700', color: Colors.primary },
 });

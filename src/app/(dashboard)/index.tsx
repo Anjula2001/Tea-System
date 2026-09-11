@@ -1,5 +1,12 @@
 import React from 'react';
-import { ScrollView, View, Text, StyleSheet, Pressable } from 'react-native';
+import {
+  ScrollView,
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  useWindowDimensions,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
@@ -37,6 +44,23 @@ import {
  */
 export default function DashboardScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  /*
+   * Below this the three headline figures stop being columns.
+   *
+   * Three 130px columns plus their rules need about 440px; under that they
+   * wrapped two-and-one, which left DIFFERENCE alone beside a gap and stranded
+   * a vertical divider in mid-air. On a phone they read better as rows — label
+   * on the left, figure on the right, a hairline between — which is how a
+   * statement of figures is normally set out anyway.
+   */
+  const figuresAsColumns = width >= 560;
+  /*
+   * Four columns need roughly this much before the numeric ones get too narrow
+   * for a seven-figure line value, which the layout then breaks across two
+   * lines mid-number.
+   */
+  const showLineValue = width >= 520;
   // the whole picture: our prices, the market, and the set being prepared
   const { ready, gate } = useScreenData(['bulkResults', 'bulkSets', 'externalResults', 'factories', 'itemPrices', 'periods', 'profile', 'teaItems']);
   const state = useTeaStore();
@@ -175,32 +199,68 @@ export default function DashboardScreen() {
               </Pressable>
             </View>
 
-            <View style={styles.expectedRow}>
-              <View style={styles.expectedBlock}>
-                <Text style={styles.expectedLabel}>PLANNED AVG PER KG</Text>
-                <Text style={styles.expectedValue}>Rs. {formatRs(forward?.expected ?? null)}</Text>
-                <Text style={styles.expectedUnit}>at historical averages</Text>
-              </View>
-              <View style={styles.expectedDivider} />
-              <View style={styles.expectedBlock}>
-                <Text style={styles.expectedLabel}>MARKET AVERAGE</Text>
-                <Text style={[styles.expectedValue, { color: '#B8860B' }]}>
-                  Rs. {formatRs(market.averagePricePerKg)}
-                </Text>
-                <Text style={styles.expectedUnit}>per kg</Text>
-              </View>
-              <View style={styles.expectedDivider} />
-              <View style={styles.expectedBlock}>
-                <Text style={styles.expectedLabel}>DIFFERENCE</Text>
-                <Text
-                  style={[
-                    styles.expectedValue,
-                    { color: (forward?.diff ?? 0) >= 0 ? Colors.above : Colors.below },
-                  ]}>
-                  {formatSignedRs(forward?.diff ?? null)}
-                </Text>
-                <Text style={styles.expectedUnit}>per kg</Text>
-              </View>
+            <View style={figuresAsColumns ? styles.expectedRow : styles.expectedStack}>
+              {[
+                {
+                  // As a row the long form wrapped onto two lines and left the
+                  // first figure sitting lower than the other two. The "per kg"
+                  // it drops moves into the note, which every row carries.
+                  label: figuresAsColumns ? 'PLANNED AVG PER KG' : 'PLANNED AVG',
+                  value: `Rs. ${formatRs(forward?.expected ?? null)}`,
+                  note: figuresAsColumns
+                    ? 'at historical averages'
+                    : 'per kg · at historical averages',
+                  color: Colors.text,
+                },
+                {
+                  label: 'MARKET AVERAGE',
+                  value: `Rs. ${formatRs(market.averagePricePerKg)}`,
+                  note: 'per kg',
+                  color: '#B8860B',
+                },
+                {
+                  label: 'DIFFERENCE',
+                  value: formatSignedRs(forward?.diff ?? null),
+                  note: 'per kg',
+                  // No figure is not a good figure: without data this stays
+                  // neutral rather than borrowing the colour of a win.
+                  color:
+                    forward?.diff == null
+                      ? Colors.textSecondary
+                      : forward.diff >= 0
+                        ? Colors.above
+                        : Colors.below,
+                },
+              ].map((figure, index) => (
+                <React.Fragment key={figure.label}>
+                  {index > 0 && (
+                    <View
+                      style={figuresAsColumns ? styles.expectedDivider : styles.expectedRule}
+                    />
+                  )}
+                  {figuresAsColumns ? (
+                    <View style={styles.expectedBlock}>
+                      <Text style={styles.expectedLabel}>{figure.label}</Text>
+                      <Text style={[styles.expectedValue, { color: figure.color }]}>
+                        {figure.value}
+                      </Text>
+                      <Text style={styles.expectedUnit}>{figure.note}</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.expectedLine}>
+                      <View style={styles.expectedLineText}>
+                        <Text style={styles.expectedLabel}>{figure.label}</Text>
+                        <Text style={styles.expectedUnit}>{figure.note}</Text>
+                      </View>
+                      <Text
+                        style={[styles.expectedValue, styles.expectedLineValue, { color: figure.color }]}
+                        numberOfLines={1}>
+                        {figure.value}
+                      </Text>
+                    </View>
+                  )}
+                </React.Fragment>
+              ))}
             </View>
 
             {valuation.unpricedTeaItemCodes.length > 0 && (
@@ -217,7 +277,7 @@ export default function DashboardScreen() {
                 <Text style={[styles.th, styles.colItem]}>Tea Item</Text>
                 <Text style={[styles.th, styles.colNum]}>Quantity</Text>
                 <Text style={[styles.th, styles.colNum]}>Our Avg (Rs/kg)</Text>
-                <Text style={[styles.th, styles.colNum]}>Line Value</Text>
+                {showLineValue && <Text style={[styles.th, styles.colNum]}>Line Value</Text>}
               </View>
               {valuation.lines.map((line) => (
                 <View key={line.teaItemId} style={styles.tableRow}>
@@ -225,20 +285,31 @@ export default function DashboardScreen() {
                     <Text style={styles.tdBold}>{line.teaItemCode}</Text>
                     <Text style={styles.tdMuted}>{line.teaItemName}</Text>
                   </View>
-                  <Text style={[styles.tdText, styles.colNum]}>
+                  {/* numberOfLines keeps a figure on one line: without it the
+                      column broke "1,614,171" across two rows as "1,614,17"
+                      and "1", which reads as a different number. */}
+                  <Text style={[styles.tdText, styles.colNum]} numberOfLines={1}>
                     {formatKg(line.quantityKg)} kg
                   </Text>
-                  <Text style={[styles.tdBold, styles.colNum]}>
+                  <Text style={[styles.tdBold, styles.colNum]} numberOfLines={1}>
                     {line.ourAveragePricePerKg === null
                       ? 'no history'
                       : formatRs(line.ourAveragePricePerKg)}
                   </Text>
-                  <Text style={[styles.tdText, styles.colNum]}>
-                    {line.lineValue === null ? '—' : formatRs(line.lineValue, 0)}
-                  </Text>
+                  {showLineValue && (
+                    <Text style={[styles.tdText, styles.colNum]} numberOfLines={1}>
+                      {line.lineValue === null ? '—' : formatRs(line.lineValue, 0)}
+                    </Text>
+                  )}
                 </View>
               ))}
             </View>
+            {!showLineValue && (
+              <Text style={styles.tableNote}>
+                Line value is left out at this width — it is quantity × our average, and the
+                total they add up to is the planned figure above.
+              </Text>
+            )}
           </View>
         )}
 
@@ -448,18 +519,40 @@ const styles = StyleSheet.create({
   sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
   viewAllText: { fontSize: 13, fontWeight: '600', color: Colors.primary },
 
+  /* Three columns, wide enough that they never wrap — see `figuresAsColumns`. */
   expectedRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     alignItems: 'stretch',
     backgroundColor: Colors.background,
     borderRadius: 10,
     paddingVertical: 16,
-    paddingHorizontal: 12,
-    gap: 12,
+    paddingHorizontal: 14,
+    gap: 14,
   },
   expectedBlock: { flexGrow: 1, flexShrink: 1, flexBasis: 130, minWidth: 0, gap: 2 },
   expectedDivider: { width: 1, backgroundColor: Colors.border },
+
+  /* The same three figures as rows, for a phone. */
+  expectedStack: {
+    backgroundColor: Colors.background,
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  expectedLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 12,
+  },
+  expectedLineText: { flexShrink: 1, minWidth: 0, gap: 1 },
+  // Right-aligned so the figures line up under one another and can be compared
+  // down the column, which is the whole point of putting them together.
+  expectedLineValue: { textAlign: 'right', flexShrink: 0 },
+  expectedRule: { height: 1, backgroundColor: Colors.border },
+
+  tableNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   expectedLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.6 },
   expectedValue: { fontSize: 20, fontWeight: '700', color: Colors.text },
   expectedUnit: { fontSize: 11, color: Colors.textSecondary },

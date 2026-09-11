@@ -7,6 +7,7 @@ import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
 import { useLoadedStore } from '@/components/data-state';
 import Header from '@/components/header';
+import { SearchField } from '@/components/picker-card';
 import { LeafIcon, PlusIcon } from '@/components/ui-icons';
 import { formatAuctionDate, formatPercent, formatRs } from '@/domain/averaging';
 import { auctionBounds, isIsoDate, rangePresets } from '@/domain/date-range';
@@ -315,22 +316,7 @@ export default function ItemAveragesScreen() {
 
           {/* Finding a grade */}
           <View style={styles.searchRow}>
-            <View style={styles.searchField}>
-              <TextInput
-                style={styles.searchInput}
-                value={query}
-                onChangeText={setQuery}
-                placeholder="Search code, name or category…"
-                placeholderTextColor={Colors.textSecondary}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              {query !== '' && (
-                <Pressable style={styles.clearButton} onPress={() => setQuery('')}>
-                  <Text style={styles.clearButtonText}>Clear</Text>
-                </Pressable>
-              )}
-            </View>
+            <SearchField value={query} onChangeText={setQuery} placeholder="Search code, name or category…" />
 
             <View style={styles.filterRow}>
               {(['all', 'active', 'retired'] as const).map((option) => {
@@ -510,27 +496,6 @@ const styles = StyleSheet.create({
 
 
   searchRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
-  searchField: {
-    flexGrow: 1,
-    flexBasis: 220,
-    minWidth: 180,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-  },
-  searchInput: {
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: Colors.text,
-  },
-  clearButton: { paddingHorizontal: 6, paddingVertical: 4 },
-  clearButtonText: { fontSize: 12, fontWeight: '600', color: Colors.primary },
   filterRow: { flexDirection: 'row', gap: 6 },
   filterPill: {
     borderWidth: 1,

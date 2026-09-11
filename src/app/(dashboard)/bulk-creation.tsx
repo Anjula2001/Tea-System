@@ -6,6 +6,12 @@ import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
 import { useLoadedStore } from '@/components/data-state';
 import Header from '@/components/header';
+import {
+  FilterPills,
+  PickerCard,
+  SearchField,
+  pickerStyles,
+} from '@/components/picker-card';
 import VerdictBadge from '@/components/verdict-badge';
 import { PlusIcon, LeafIcon } from '@/components/ui-icons';
 import {
@@ -111,6 +117,24 @@ export default function BulkSetScreen() {
     setNotice(null);
   };
 
+  // -------------------------------------------------------- choosing a set
+  //
+  // As on Auction Results: one set on show, the rest behind a search. There is
+  // no date filter here, and that is deliberate — an auction IS a date, but a
+  // bulk set is a named plan. You look for BS-103, or for whatever is still a
+  // draft; nobody remembers the day a plan was typed. Its date is shown as
+  // context instead of offered as a filter.
+  const [picking, setPicking] = useState(false);
+  const [setQuery, setSetQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'pending'>('all');
+
+  const setNeedle = setQuery.trim().toLowerCase();
+  const visibleSets = editable.filter((set) => {
+    if (statusFilter !== 'all' && set.status !== statusFilter) return false;
+    if (setNeedle === '') return true;
+    return `${set.reference} ${set.status} ${set.notes ?? ''}`.toLowerCase().includes(setNeedle);
+  });
+
   const draftItems: BulkSetItem[] = useMemo(
     () =>
       teaItems
@@ -184,33 +208,100 @@ export default function BulkSetScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
 
-        <View style={styles.selectorCard}>
-          <Text style={styles.selectorLabel}>BULK SET</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.pillRow}>
-              {editable.map((set) => {
-                const active = set.id === selectedId;
-                return (
-                  <Pressable
-                    key={set.id}
-                    style={[styles.pill, active && styles.pillActive]}
-                    onPress={() => switchSet(set.id)}>
-                    <Text style={[styles.pillTitle, active && styles.pillTitleActive]}>
-                      {set.reference}
-                    </Text>
-                    <Text style={[styles.pillMeta, active && styles.pillMetaActive]}>
-                      {set.items.length} items · {set.status}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-              <Pressable style={styles.pillNew} onPress={() => switchSet(null)}>
-                <PlusIcon color={Colors.primary} size={14} />
-                <Text style={styles.pillNewText}>New set</Text>
-              </Pressable>
-            </View>
-          </ScrollView>
-        </View>
+        {/* Which set — the one in hand, with the rest behind a search */}
+        <PickerCard
+          label="BULK SET"
+          open={picking}
+          onToggle={() => setPicking((on) => !on)}
+          action={{
+            label: '+ New set',
+            onPress: () => {
+              switchSet(null);
+              setPicking(false);
+            },
+          }}
+          summary={
+            selected ? (
+              <View>
+                <Text style={pickerStyles.chosenTitle}>{selected.reference}</Text>
+                <Text style={pickerStyles.chosenMeta}>
+                  {selected.items.length} item{selected.items.length === 1 ? '' : 's'} ·{' '}
+                  {selected.status} · created {formatAuctionDate(selected.createdAt.slice(0, 10))}
+                </Text>
+              </View>
+            ) : (
+              <View>
+                <Text style={pickerStyles.chosenTitle}>New set · {reference}</Text>
+                <Text style={pickerStyles.chosenMeta}>
+                  {draftItems.length === 0
+                    ? 'Nothing entered yet — add kilos below.'
+                    : `Not saved yet — ${formatKg(valuation.totalQuantityKg)} kg across ${
+                        draftItems.length
+                      } grade${draftItems.length === 1 ? '' : 's'}.`}
+                </Text>
+              </View>
+            )
+          }>
+          <SearchField
+            value={setQuery}
+            onChangeText={setSetQuery}
+            placeholder="Search by reference, status or note…"
+          />
+
+          <FilterPills
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'draft', label: 'Draft' },
+              { value: 'pending', label: 'Pending' },
+            ]}
+            value={statusFilter}
+            onChange={setStatusFilter}
+          />
+
+          <Text style={pickerStyles.count}>
+            {visibleSets.length} of {editable.length} set{editable.length === 1 ? '' : 's'} · sold
+            sets are not listed, because their quantities are on the record and cannot be edited
+          </Text>
+
+          {visibleSets.length === 0 ? (
+            <Text style={pickerStyles.empty}>
+              No set matches. Clear the search, or start a new set.
+            </Text>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={styles.pillRow}>
+                {visibleSets.map((set) => {
+                  const active = set.id === selectedId;
+                  return (
+                    <Pressable
+                      key={set.id}
+                      style={[styles.pill, active && styles.pillActive]}
+                      onPress={() => {
+                        switchSet(set.id);
+                        setPicking(false);
+                      }}>
+                      <Text style={[styles.pillTitle, active && styles.pillTitleActive]}>
+                        {set.reference}
+                      </Text>
+                      <Text style={[styles.pillMeta, active && styles.pillMetaActive]}>
+                        {set.items.length} items · {set.status}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+                <Pressable
+                  style={styles.pillNew}
+                  onPress={() => {
+                    switchSet(null);
+                    setPicking(false);
+                  }}>
+                  <PlusIcon color={Colors.primary} size={14} />
+                  <Text style={styles.pillNewText}>New set</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          )}
+        </PickerCard>
 
         {notice && (
           <View style={[styles.notice, notice.tone === 'error' && styles.noticeError]}>
@@ -505,15 +596,6 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: { padding: 20, gap: 20, paddingBottom: 48 },
 
-  selectorCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 10,
-  },
-  selectorLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.8 },
   pillRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   pill: {
     backgroundColor: Colors.background,

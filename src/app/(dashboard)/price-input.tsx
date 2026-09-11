@@ -14,6 +14,12 @@ import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
 import { useLoadedStore } from '@/components/data-state';
 import Header from '@/components/header';
+import {
+  FilterPills,
+  PickerCard,
+  SearchField,
+  pickerStyles,
+} from '@/components/picker-card';
 import VerdictBadge from '@/components/verdict-badge';
 import { LeafIcon, MoneyIcon, ChartIcon } from '@/components/ui-icons';
 import {
@@ -505,192 +511,169 @@ export default function AuctionResultsScreen() {
         showsVerticalScrollIndicator={false}>
 
         {/* Which auction — the current one, with the rest behind a search */}
-        <View style={styles.selectorCard}>
-          <View style={styles.selectorHead}>
-            <Text style={styles.selectorLabel}>AUCTION</Text>
-            <View style={styles.selectorActions}>
-              <Pressable style={styles.linkButton} onPress={openPicker}>
-                <Text style={styles.linkButtonText}>{picking ? 'Done' : 'Change'}</Text>
-              </Pressable>
-              <Pressable style={styles.linkButton} onPress={openAdd}>
-                <Text style={styles.linkButtonText}>{adding ? 'Cancel' : '+ New auction'}</Text>
-              </Pressable>
+        <PickerCard
+          label="AUCTION"
+          open={picking}
+          onToggle={openPicker}
+          action={{ label: adding ? 'Cancel' : '+ New auction', onPress: openAdd }}
+          summary={
+            <>
+              {period ? (
+                <View style={pickerStyles.chosenRow}>
+                  <View style={pickerStyles.flexOne}>
+                    <Text style={pickerStyles.chosenTitle}>{period.label}</Text>
+                    <Text style={pickerStyles.chosenMeta}>
+                      {formatAuctionDate(period.auctionDate)} ·{' '}
+                      {period.status === 'upcoming' ? 'not yet sold' : 'sold'}
+                    </Text>
+                  </View>
+                  {period.status === 'upcoming' && <View style={styles.upcomingDot} />}
+                </View>
+              ) : (
+                <Text style={pickerStyles.empty}>No auction selected.</Text>
+              )}
+
+              {/* Only when you have wandered off the current auction, so the
+                  normal case carries no extra chrome. */}
+              {currentPeriod && period && period.id !== currentPeriod.id && (
+                <Pressable onPress={() => switchPeriod(currentPeriod.id)}>
+                  <Text style={pickerStyles.backLink}>
+                    This is an earlier auction — back to {currentPeriod.label}
+                  </Text>
+                </Pressable>
+              )}
+
+              {adding && (
+                <View style={pickerStyles.addForm}>
+                  <View style={[pickerStyles.addField, pickerStyles.addFieldWide]}>
+                    <Text style={pickerStyles.fieldLabel}>LABEL</Text>
+                    <TextInput
+                      style={pickerStyles.textInput}
+                      value={newAuction.label}
+                      onChangeText={(label) => setNewAuction((a) => ({ ...a, label }))}
+                      placeholder="Auction 27 · Oct 2026"
+                      placeholderTextColor={Colors.textSecondary}
+                    />
+                  </View>
+                  <View style={pickerStyles.addField}>
+                    <Text style={pickerStyles.fieldLabel}>DATE</Text>
+                    <TextInput
+                      style={pickerStyles.textInput}
+                      value={newAuction.date}
+                      onChangeText={(date) => setNewAuction((a) => ({ ...a, date }))}
+                      placeholder="2026-10-07"
+                      placeholderTextColor={Colors.textSecondary}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  </View>
+                  <Pressable
+                    style={[pickerStyles.applyButton, saving && pickerStyles.busy]}
+                    disabled={saving}
+                    onPress={addAuction}>
+                    <Text style={pickerStyles.applyButtonText}>
+                      {saving ? 'Adding…' : 'Add'}
+                    </Text>
+                  </Pressable>
+                  <Text style={pickerStyles.addNote}>
+                    Suggested from the auctions already on file — three weeks on from the last
+                    one. Change either field before adding.
+                  </Text>
+                </View>
+              )}
+            </>
+          }>
+          <SearchField
+            value={auctionQuery}
+            onChangeText={setAuctionQuery}
+            placeholder="Search by label or date…"
+          />
+
+          <FilterPills
+            options={pickPresets.map((preset) => ({ value: preset.label, label: preset.label }))}
+            value={
+              pickPresets.find(
+                (p) => p.value.from === appliedPick.from && p.value.to === appliedPick.to,
+              )?.label ?? ''
+            }
+            onChange={(label) => {
+              const preset = pickPresets.find((p) => p.label === label);
+              if (preset) applyPick(preset.value);
+            }}
+          />
+
+          <View style={pickerStyles.dateRow}>
+            <View style={pickerStyles.dateField}>
+              <Text style={pickerStyles.fieldLabel}>FROM</Text>
+              <TextInput
+                style={pickerStyles.textInput}
+                value={fromValue}
+                onChangeText={setFromDraft}
+                placeholder={pickBounds.from}
+                placeholderTextColor={Colors.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
             </View>
+            <View style={pickerStyles.dateField}>
+              <Text style={pickerStyles.fieldLabel}>TO</Text>
+              <TextInput
+                style={pickerStyles.textInput}
+                value={toValue}
+                onChangeText={setToDraft}
+                placeholder={pickBounds.to}
+                placeholderTextColor={Colors.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+            <Pressable style={pickerStyles.applyButton} onPress={applyTypedPick}>
+              <Text style={pickerStyles.applyButtonText}>Apply</Text>
+            </Pressable>
+            <Pressable style={pickerStyles.outlineButton} onPress={() => applyPick(pickBounds)}>
+              <Text style={pickerStyles.outlineButtonText}>Reset</Text>
+            </Pressable>
           </View>
 
-          {period ? (
-            <View style={styles.chosenRow}>
-              <View style={styles.flexOne}>
-                <Text style={styles.chosenTitle}>{period.label}</Text>
-                <Text style={styles.chosenMeta}>
-                  {formatAuctionDate(period.auctionDate)} ·{' '}
-                  {period.status === 'upcoming' ? 'not yet sold' : 'sold'}
-                </Text>
-              </View>
-              {period.status === 'upcoming' && <View style={styles.upcomingDot} />}
-            </View>
+          {rangeError && <Text style={pickerStyles.errorText}>{rangeError}</Text>}
+
+          <Text style={pickerStyles.count}>
+            {visiblePeriods.length} of {orderedPeriods.length} auction
+            {orderedPeriods.length === 1 ? '' : 's'} · this only filters the list, not the figures
+            below
+          </Text>
+
+          {visiblePeriods.length === 0 ? (
+            <Text style={pickerStyles.empty}>
+              No auction matches. Widen the dates, clear the search, or add a new auction.
+            </Text>
           ) : (
-            <Text style={styles.emptyText}>No auction selected.</Text>
-          )}
-
-          {/* Only when you have wandered off the current auction, so the normal
-              case carries no extra chrome. */}
-          {currentPeriod && period && period.id !== currentPeriod.id && (
-            <Pressable onPress={() => switchPeriod(currentPeriod.id)}>
-              <Text style={styles.backToCurrent}>
-                This is an earlier auction — back to {currentPeriod.label}
-              </Text>
-            </Pressable>
-          )}
-
-          {adding && (
-            <View style={styles.addForm}>
-              <View style={[styles.addField, styles.addFieldWide]}>
-                <Text style={styles.fieldLabel}>LABEL</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={newAuction.label}
-                  onChangeText={(label) => setNewAuction((a) => ({ ...a, label }))}
-                  placeholder="Auction 27 · Oct 2026"
-                  placeholderTextColor={Colors.textSecondary}
-                />
-              </View>
-              <View style={styles.addField}>
-                <Text style={styles.fieldLabel}>DATE</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={newAuction.date}
-                  onChangeText={(date) => setNewAuction((a) => ({ ...a, date }))}
-                  placeholder="2026-10-07"
-                  placeholderTextColor={Colors.textSecondary}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
-              <Pressable
-                style={[styles.applyButton, saving && styles.busy]}
-                disabled={saving}
-                onPress={addAuction}>
-                <Text style={styles.applyButtonText}>{saving ? 'Adding…' : 'Add'}</Text>
-              </Pressable>
-              <Text style={styles.addNote}>
-                Suggested from the auctions already on file — three weeks on from the last one.
-                Change either field before adding.
-              </Text>
-            </View>
-          )}
-
-          {picking && (
-            <View style={styles.pickerPanel}>
-              <View style={styles.searchField}>
-                <TextInput
-                  style={styles.searchInput}
-                  value={auctionQuery}
-                  onChangeText={setAuctionQuery}
-                  placeholder="Search by label or date…"
-                  placeholderTextColor={Colors.textSecondary}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {auctionQuery !== '' && (
-                  <Pressable style={styles.clearButton} onPress={() => setAuctionQuery('')}>
-                    <Text style={styles.clearButtonText}>Clear</Text>
-                  </Pressable>
-                )}
-              </View>
-
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <View style={styles.pillRow}>
-                {pickPresets.map((preset) => {
-                  const active =
-                    appliedPick.from === preset.value.from && appliedPick.to === preset.value.to;
+                {visiblePeriods.map((p) => {
+                  const active = p.id === periodId;
                   return (
                     <Pressable
-                      key={preset.label}
-                      style={[styles.filterPill, active && styles.filterPillActive]}
-                      onPress={() => applyPick(preset.value)}>
-                      <Text
-                        style={[styles.filterPillText, active && styles.filterPillTextActive]}>
-                        {preset.label}
+                      key={p.id}
+                      style={[styles.pill, active && styles.pillActive]}
+                      onPress={() => {
+                        switchPeriod(p.id);
+                        setPicking(false);
+                      }}>
+                      <Text style={[styles.pillTitle, active && styles.pillTitleActive]}>
+                        {p.label}
                       </Text>
+                      <Text style={[styles.pillMeta, active && styles.pillMetaActive]}>
+                        {formatAuctionDate(p.auctionDate)}
+                      </Text>
+                      {p.status === 'upcoming' && <View style={styles.upcomingDot} />}
                     </Pressable>
                   );
                 })}
               </View>
-
-              <View style={styles.dateRow}>
-                <View style={styles.dateField}>
-                  <Text style={styles.fieldLabel}>FROM</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={fromValue}
-                    onChangeText={setFromDraft}
-                    placeholder={pickBounds.from}
-                    placeholderTextColor={Colors.textSecondary}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                </View>
-                <View style={styles.dateField}>
-                  <Text style={styles.fieldLabel}>TO</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={toValue}
-                    onChangeText={setToDraft}
-                    placeholder={pickBounds.to}
-                    placeholderTextColor={Colors.textSecondary}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                </View>
-                <Pressable style={styles.applyButton} onPress={applyTypedPick}>
-                  <Text style={styles.applyButtonText}>Apply</Text>
-                </Pressable>
-                <Pressable style={styles.outlineButton} onPress={() => applyPick(pickBounds)}>
-                  <Text style={styles.outlineButtonText}>Reset</Text>
-                </Pressable>
-              </View>
-
-              {rangeError && <Text style={styles.errorText}>{rangeError}</Text>}
-
-              <Text style={styles.searchCount}>
-                {visiblePeriods.length} of {orderedPeriods.length} auction
-                {orderedPeriods.length === 1 ? '' : 's'} · this only filters the list, not the
-                figures below
-              </Text>
-
-              {visiblePeriods.length === 0 ? (
-                <Text style={styles.emptyText}>
-                  No auction matches. Widen the dates, clear the search, or add a new auction.
-                </Text>
-              ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View style={styles.pillRow}>
-                    {visiblePeriods.map((p) => {
-                      const active = p.id === periodId;
-                      return (
-                        <Pressable
-                          key={p.id}
-                          style={[styles.pill, active && styles.pillActive]}
-                          onPress={() => {
-                            switchPeriod(p.id);
-                            setPicking(false);
-                          }}>
-                          <Text style={[styles.pillTitle, active && styles.pillTitleActive]}>
-                            {p.label}
-                          </Text>
-                          <Text style={[styles.pillMeta, active && styles.pillMetaActive]}>
-                            {formatAuctionDate(p.auctionDate)}
-                          </Text>
-                          {p.status === 'upcoming' && <View style={styles.upcomingDot} />}
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </ScrollView>
-              )}
-            </View>
+            </ScrollView>
           )}
-        </View>
+        </PickerCard>
 
         {savedNotice && (
           <View
@@ -1002,24 +985,13 @@ export default function AuctionResultsScreen() {
             </Text>
           ) : (
             <>
-              <View style={styles.searchField}>
-                <TextInput
-                  style={styles.searchInput}
-                  value={factoryQuery}
-                  onChangeText={setFactoryQuery}
-                  placeholder="Search factory by code, name or region…"
-                  placeholderTextColor={Colors.textSecondary}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {factoryQuery !== '' && (
-                  <Pressable style={styles.clearButton} onPress={() => setFactoryQuery('')}>
-                    <Text style={styles.clearButtonText}>Clear</Text>
-                  </Pressable>
-                )}
-              </View>
+              <SearchField
+                value={factoryQuery}
+                onChangeText={setFactoryQuery}
+                placeholder="Search factory by code, name or region…"
+              />
 
-              <Text style={styles.searchCount}>
+              <Text style={pickerStyles.count}>
                 {factoryNeedle === ''
                   ? `${externalFactories.length} factor${externalFactories.length === 1 ? 'y' : 'ies'} on file`
                   : `${matchingFactories.length} of ${externalFactories.length} match “${factoryQuery.trim()}”`}
@@ -1233,90 +1205,10 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: { padding: 20, gap: 20, paddingBottom: 48 },
 
-  selectorCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 10,
-  },
-  selectorLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.8 },
-  selectorHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  selectorActions: { flexDirection: 'row', gap: 14, marginLeft: 'auto' },
-  linkButton: { paddingVertical: 2 },
-  linkButtonText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
 
-  chosenRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  flexOne: { flex: 1, minWidth: 0 },
-  chosenTitle: { fontSize: 17, fontWeight: '700', color: Colors.text },
-  chosenMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  backToCurrent: { fontSize: 12, fontWeight: '600', color: Colors.primary },
 
-  pickerPanel: {
-    gap: 12,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    paddingTop: 14,
-  },
-  filterPill: {
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    backgroundColor: Colors.background,
-  },
-  filterPillActive: { backgroundColor: Colors.primaryLight, borderColor: Colors.primary },
-  filterPillText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
-  filterPillTextActive: { color: Colors.primary },
 
-  dateRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: 10 },
-  dateField: { flexGrow: 1, flexBasis: 150, minWidth: 130, gap: 4 },
-  fieldLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.8 },
-  textInput: {
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.background,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  applyButton: {
-    backgroundColor: Colors.primary,
-    borderRadius: 8,
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-  },
-  applyButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  outlineButton: {
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: Colors.background,
-  },
-  outlineButtonText: { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
-  errorText: { fontSize: 12, color: Colors.below, fontWeight: '600' },
-  emptyText: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18 },
-  busy: { opacity: 0.6 },
 
-  addForm: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'flex-end',
-    gap: 10,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    paddingTop: 14,
-  },
-  addField: { flexGrow: 1, flexBasis: 150, minWidth: 140, gap: 4 },
-  addFieldWide: { flexBasis: 230 },
-  addNote: { flexBasis: '100%', fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   pillRow: { flexDirection: 'row', gap: 8 },
   pill: {
     backgroundColor: Colors.background,
@@ -1499,19 +1391,6 @@ const styles = StyleSheet.create({
   blendNarrowed: { fontSize: 11, color: '#8A6D1F', lineHeight: 16, marginTop: 10 },
   blendTableNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
 
-  searchField: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-  },
-  searchInput: { flex: 1, minWidth: 0, paddingVertical: 10, fontSize: 14, color: Colors.text },
-  clearButton: { paddingHorizontal: 6, paddingVertical: 4 },
-  clearButtonText: { fontSize: 12, fontWeight: '600', color: Colors.primary },
-  searchCount: { fontSize: 11, color: Colors.textSecondary },
   factoryHint: { fontSize: 11, color: Colors.textSecondary, lineHeight: 15 },
   marketRecapEmpty: {
     fontSize: 12,

@@ -42,6 +42,11 @@ import {
  * There is no per-tea-item market column anywhere, because other factories only
  * ever report one blended number. Showing one would mean inventing it.
  */
+/** The width the valuation table needs before its figures start to pinch. */
+const TABLE_MIN_WIDTH = 520;
+/** Three columns, so less — but "Our Average (Rs/kg)" is a wide heading. */
+const AVERAGES_MIN_WIDTH = 430;
+
 export default function DashboardScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -56,11 +61,10 @@ export default function DashboardScreen() {
    */
   const figuresAsColumns = width >= 560;
   /*
-   * Four columns need roughly this much before the numeric ones get too narrow
-   * for a seven-figure line value, which the layout then breaks across two
-   * lines mid-number.
+   * Below this the table is wider than the screen and scrolls sideways, so the
+   * last column starts off-screen and is worth pointing at.
    */
-  const showLineValue = width >= 520;
+  const showLineValue = width >= TABLE_MIN_WIDTH + 40;
   // the whole picture: our prices, the market, and the set being prepared
   const { ready, gate } = useScreenData(['bulkResults', 'bulkSets', 'externalResults', 'factories', 'itemPrices', 'periods', 'profile', 'teaItems']);
   const state = useTeaStore();
@@ -272,43 +276,43 @@ export default function DashboardScreen() {
               </View>
             )}
 
-            <View style={styles.table}>
-              <View style={styles.tableHeader}>
-                <Text style={[styles.th, styles.colItem]}>Tea Item</Text>
-                <Text style={[styles.th, styles.colNum]}>Quantity</Text>
-                <Text style={[styles.th, styles.colNum]}>Our Avg (Rs/kg)</Text>
-                {showLineValue && <Text style={[styles.th, styles.colNum]}>Line Value</Text>}
-              </View>
-              {valuation.lines.map((line) => (
-                <View key={line.teaItemId} style={styles.tableRow}>
-                  <View style={styles.colItem}>
-                    <Text style={styles.tdBold}>{line.teaItemCode}</Text>
-                    <Text style={styles.tdMuted}>{line.teaItemName}</Text>
-                  </View>
-                  {/* numberOfLines keeps a figure on one line: without it the
-                      column broke "1,614,171" across two rows as "1,614,17"
-                      and "1", which reads as a different number. */}
-                  <Text style={[styles.tdText, styles.colNum]} numberOfLines={1}>
-                    {formatKg(line.quantityKg)} kg
-                  </Text>
-                  <Text style={[styles.tdBold, styles.colNum]} numberOfLines={1}>
-                    {line.ourAveragePricePerKg === null
-                      ? 'no history'
-                      : formatRs(line.ourAveragePricePerKg)}
-                  </Text>
-                  {showLineValue && (
+            {/*
+              * Four columns of figures do not fit a phone, and squeezing them
+              * broke numbers across two lines — "1,614,171" became "1,614,17"
+              * and "1", which reads as a different number. So the table keeps
+              * its real width and scrolls sideways instead. `flexGrow` on the
+              * content lets it fill the card when there is room, so nothing
+              * scrolls on a desktop.
+              */}
+            <ScrollableTable minWidth={TABLE_MIN_WIDTH}>
+                <View style={styles.tableHeader}>
+                  <Text style={[styles.th, styles.colItem]}>Tea Item</Text>
+                  <Text style={[styles.th, styles.colNum]}>Quantity</Text>
+                  <Text style={[styles.th, styles.colNum]}>Our Avg (Rs/kg)</Text>
+                  <Text style={[styles.th, styles.colNum]}>Line Value</Text>
+                </View>
+                {valuation.lines.map((line) => (
+                  <View key={line.teaItemId} style={styles.tableRow}>
+                    <View style={styles.colItem}>
+                      <Text style={styles.tdBold}>{line.teaItemCode}</Text>
+                      <Text style={styles.tdMuted}>{line.teaItemName}</Text>
+                    </View>
+                    <Text style={[styles.tdText, styles.colNum]} numberOfLines={1}>
+                      {formatKg(line.quantityKg)} kg
+                    </Text>
+                    <Text style={[styles.tdBold, styles.colNum]} numberOfLines={1}>
+                      {line.ourAveragePricePerKg === null
+                        ? 'no history'
+                        : formatRs(line.ourAveragePricePerKg)}
+                    </Text>
                     <Text style={[styles.tdText, styles.colNum]} numberOfLines={1}>
                       {line.lineValue === null ? '—' : formatRs(line.lineValue, 0)}
                     </Text>
-                  )}
-                </View>
-              ))}
-            </View>
+                  </View>
+                ))}
+            </ScrollableTable>
             {!showLineValue && (
-              <Text style={styles.tableNote}>
-                Line value is left out at this width — it is quantity × our average, and the
-                total they add up to is the planned figure above.
-              </Text>
+              <Text style={styles.tableNote}>Scroll the table sideways for the line value.</Text>
             )}
           </View>
         )}
@@ -345,7 +349,7 @@ export default function DashboardScreen() {
             </Pressable>
           </View>
 
-          <View style={styles.table}>
+          <ScrollableTable minWidth={AVERAGES_MIN_WIDTH}>
             <View style={styles.tableHeader}>
               <Text style={[styles.th, styles.colItem]}>Tea Item</Text>
               <Text style={[styles.th, styles.colNum]}>Auctions</Text>
@@ -357,15 +361,17 @@ export default function DashboardScreen() {
                   <Text style={styles.tdBold}>{average.teaItemCode}</Text>
                   <Text style={styles.tdMuted}>{average.teaItemName}</Text>
                 </View>
-                <Text style={[styles.tdText, styles.colNum]}>{average.periodsCounted}</Text>
-                <Text style={[styles.tdBold, styles.colNum]}>
+                <Text style={[styles.tdText, styles.colNum]} numberOfLines={1}>
+                  {average.periodsCounted}
+                </Text>
+                <Text style={[styles.tdBold, styles.colNum]} numberOfLines={1}>
                   {average.averagePricePerKg === null
                     ? 'no history'
                     : formatRs(average.averagePricePerKg)}
                 </Text>
               </View>
             ))}
-          </View>
+          </ScrollableTable>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -405,6 +411,31 @@ function MetricCard({
           that card's number a row below every other card's. */}
       {badge ? <View style={styles.cardBadge}>{badge}</View> : null}
     </View>
+  );
+}
+
+/**
+ * A table that keeps its real width and scrolls sideways on a narrow screen,
+ * rather than squeezing its columns until the figures break across two lines —
+ * "1,614,171" rendered as "1,614,17" and "1" reads as a different number.
+ *
+ * `flexGrow` on both the scroll content and the table lets it fill the card
+ * when there is room, so nothing scrolls on a desktop.
+ */
+function ScrollableTable({
+  minWidth,
+  children,
+}: {
+  minWidth: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator
+      contentContainerStyle={styles.tableScrollContent}>
+      <View style={[styles.table, styles.tableWide, { minWidth }]}>{children}</View>
+    </ScrollView>
   );
 }
 
@@ -552,6 +583,9 @@ const styles = StyleSheet.create({
   expectedLineValue: { textAlign: 'right', flexShrink: 0 },
   expectedRule: { height: 1, backgroundColor: Colors.border },
 
+  tableScrollContent: { flexGrow: 1 },
+  // Enough for a seven-figure line value without the column pinching it.
+  tableWide: { flexGrow: 1 },
   tableNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   expectedLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.6 },
   expectedValue: { fontSize: 20, fontWeight: '700', color: Colors.text },
@@ -586,8 +620,10 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
     gap: 8,
   },
-  colItem: { flex: 2.4 },
-  colNum: { flex: 1.3, textAlign: 'right' },
+  // Real minimums as well as proportions: inside a horizontally scrolling
+  // table the proportions alone would let a column shrink to nothing again.
+  colItem: { flex: 2.4, minWidth: 150 },
+  colNum: { flex: 1.3, minWidth: 84, textAlign: 'right' },
   tdBold: { fontSize: 13, fontWeight: '600', color: Colors.text },
   tdText: { fontSize: 13, color: Colors.textSecondary },
   tdMuted: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },

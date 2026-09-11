@@ -236,6 +236,14 @@ export default function AuctionResultsScreen() {
   );
   /** Off by default: the blended figure is derived, typing it is the exception. */
   const [bulkOverride, setBulkOverride] = useState(false);
+  /*
+   * Saving is append-only and marks the auction sold, so it asks first.
+   *
+   * An inline confirmation rather than `Alert.alert`, which does nothing on
+   * web — this screen runs in a browser as well as on a phone, and a
+   * confirmation that silently no-ops on one of them is worse than none.
+   */
+  const [confirmSave, setConfirmSave] = useState(false);
 
   const itemValue = (id: string) =>
     itemDrafts[id] ?? (savedItemPrices.get(id) !== undefined ? String(savedItemPrices.get(id)) : '');
@@ -250,6 +258,7 @@ export default function AuctionResultsScreen() {
     setFactoryDrafts({});
     setSavedNotice(null);
     setBulkOverride(false);
+    setConfirmSave(false);
   };
 
   // The set on the bench. Its grades are what the blend needs, so they decide
@@ -349,24 +358,43 @@ export default function AuctionResultsScreen() {
     ...compare(effectiveBulk, marketNow.averagePricePerKg),
   };
 
+  /*
+   * What saving would actually change.
+   *
+   * Worked out here rather than inside the handler because the confirmation
+   * below has to say it before anything happens — a yes/no that cannot tell
+   * you what you are agreeing to is just an extra tap.
+   *
+   * Only what moved: re-saving an unchanged figure would append a correction
+   * that corrects nothing.
+   */
+  const itemEntries = movements
+    .filter((m) => m.enteredPricePerKg !== null)
+    .map((m) => ({ teaItemId: m.item.id, pricePerKg: m.enteredPricePerKg! }))
+    .filter((e) => e.pricePerKg !== savedItemPrices.get(e.teaItemId));
+
+  const factoryEntries = [...enteredExternal]
+    .map(([externalFactoryId, pricePerKg]) => ({ externalFactoryId, pricePerKg }))
+    .filter((e) => e.pricePerKg !== savedExternal.get(e.externalFactoryId));
+
+  // A blend over part of the set is not the set's price. Until every required
+  // grade has a figure, the item prices are still worth recording — the
+  // blended number is not, so it is held back rather than saved half-made.
+  const held = !manualEntry && missingRequired.length > 0;
+
+  const bulkWillChange = manualEntry
+    ? typedBulk !== null && typedBulk !== savedBulk
+    : !held && bulkSet !== null && blendedBulk !== null && blendedBulk !== savedBulk;
+
+  /** A correction overwrites nothing — it appends — so it is worth naming. */
+  const corrections =
+    itemEntries.filter((e) => savedItemPrices.has(e.teaItemId)).length +
+    factoryEntries.filter((e) => savedExternal.has(e.externalFactoryId)).length;
+
+  const changeCount = itemEntries.length + factoryEntries.length + (bulkWillChange ? 1 : 0);
+
   const save = async () => {
     if (!period) return;
-
-    const itemEntries = movements
-      .filter((m) => m.enteredPricePerKg !== null)
-      .map((m) => ({ teaItemId: m.item.id, pricePerKg: m.enteredPricePerKg! }))
-      .filter((e) => e.pricePerKg !== savedItemPrices.get(e.teaItemId));
-
-    // Only what actually moved. Re-saving an unchanged figure would append a
-    // correction that corrects nothing.
-    const factoryEntries = [...enteredExternal]
-      .map(([externalFactoryId, pricePerKg]) => ({ externalFactoryId, pricePerKg }))
-      .filter((e) => e.pricePerKg !== savedExternal.get(e.externalFactoryId));
-
-    // A blend over part of the set is not the set's price. Until every required
-    // grade has a figure, the item prices are still worth recording — the
-    // blended number is not, so it is held back rather than saved half-made.
-    const held = !manualEntry && missingRequired.length > 0;
 
     try {
       // Item prices first: the backend derives the blend from what it holds, so
@@ -1094,14 +1122,89 @@ export default function AuctionResultsScreen() {
           </View>
         </View>
 
-        <Pressable
-          style={[styles.saveButton, saving && styles.saveButtonBusy]}
-          disabled={saving}
-          onPress={save}>
-          <Text style={styles.saveButtonText}>
-            {saving ? 'Saving…' : `Save results for ${period?.label ?? 'this auction'}`}
-          </Text>
-        </Pressable>
+        {confirmSave ? (
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>
+              Save these results for {period?.label ?? 'this auction'}?
+            </Text>
+
+            {changeCount === 0 ? (
+              <Text style={styles.confirmText}>
+                Nothing has changed since the last save, so this will record nothing.
+              </Text>
+            ) : (
+              <View style={styles.confirmList}>
+                {itemEntries.length > 0 && (
+                  <Text style={styles.confirmText}>
+                    · {itemEntries.length} tea item price
+                    {itemEntries.length === 1 ? '' : 's'}
+                  </Text>
+                )}
+                {bulkWillChange && (
+                  <Text style={styles.confirmText}>
+                    · our blended bulk price, Rs. {formatRs(effectiveBulk)} /kg
+                    {manualEntry ? ' (typed by hand)' : ''}
+                  </Text>
+                )}
+                {factoryEntries.length > 0 && (
+                  <Text style={styles.confirmText}>
+                    · {factoryEntries.length} other factory price
+                    {factoryEntries.length === 1 ? '' : 's'}
+                  </Text>
+                )}
+              </View>
+            )}
+
+            {corrections > 0 && (
+              <Text style={styles.confirmNote}>
+                {corrections} of these already {corrections === 1 ? 'has' : 'have'} a figure on
+                file. The original is kept and the new one recorded as a correction — nothing is
+                overwritten.
+              </Text>
+            )}
+
+            {held && (
+              <Text style={styles.confirmWarn}>
+                {missingRequired.map((m) => m.item.code).join(', ')} still{' '}
+                {missingRequired.length === 1 ? 'has' : 'have'} no price, so the bulk figure is
+                held back. The item prices above are still recorded.
+              </Text>
+            )}
+
+            {period?.status === 'upcoming' && !held && (
+              <Text style={styles.confirmNote}>
+                This also marks {period.label} as sold.
+              </Text>
+            )}
+
+            <View style={styles.confirmActions}>
+              <Pressable
+                style={[styles.saveButton, styles.confirmYes, saving && styles.saveButtonBusy]}
+                disabled={saving}
+                onPress={() => {
+                  setConfirmSave(false);
+                  void save();
+                }}>
+                <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Yes, save'}</Text>
+              </Pressable>
+              <Pressable
+                style={styles.confirmCancel}
+                disabled={saving}
+                onPress={() => setConfirmSave(false)}>
+                <Text style={styles.confirmCancelText}>No, go back</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <Pressable
+            style={[styles.saveButton, saving && styles.saveButtonBusy]}
+            disabled={saving}
+            onPress={() => setConfirmSave(true)}>
+            <Text style={styles.saveButtonText}>
+              {saving ? 'Saving…' : `Save results for ${period?.label ?? 'this auction'}`}
+            </Text>
+          </Pressable>
+        )}
         <Text style={styles.appendNote}>
           Saving appends to the record — the item prices, and the blended bulk figure they produce.
           Entering a value that already exists keeps the original on file and treats the new one as
@@ -1484,6 +1587,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveButtonBusy: { opacity: 0.6 },
+  // The full-width save button has no horizontal padding — it does not need any
+  // while it spans the screen. Side by side with Cancel it shrinks to the text
+  // and clips it, so this adds the padding and stops it being squeezed.
+  confirmYes: { paddingHorizontal: 24, flexShrink: 0 },
+  confirmCard: {
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    padding: 18,
+    gap: 10,
+  },
+  confirmTitle: { fontSize: 15, fontWeight: '700', color: Colors.text },
+  confirmList: { gap: 3 },
+  confirmText: { fontSize: 13, color: Colors.text, lineHeight: 19 },
+  confirmNote: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17 },
+  confirmWarn: { fontSize: 12, color: '#8A6D1F', lineHeight: 17, fontWeight: '600' },
+  confirmActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 2 },
+  confirmCancel: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  confirmCancelText: { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
   saveButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   appendNote: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center', lineHeight: 16 },
 });

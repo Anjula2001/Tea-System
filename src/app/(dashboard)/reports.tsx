@@ -8,6 +8,7 @@ import Header from '@/components/header';
 import VerdictBadge from '@/components/verdict-badge';
 import { ChartIcon } from '@/components/ui-icons';
 import { formatAuctionDate, formatRs, formatSignedRs } from '@/domain/averaging';
+import { rangePresets } from '@/domain/date-range';
 import {
   periodsInRange,
   selectActiveExternalFactories,
@@ -27,9 +28,14 @@ type Filter = 'all' | 'above' | 'below';
 /**
  * The record: every auction, what we got, what the market got.
  *
- * The date range at the top drives every figure on the screen — our averages
- * and the market benchmark alike — so the two sides are always measured over
- * the same span.
+ * The range at the top drives every figure here — our averages and the market
+ * benchmark alike — so the two sides are always measured over the same span.
+ *
+ * It is the store's range, not this screen's, and this is the only screen that
+ * can change it. Narrowing it here also re-bases the Dashboard, the planned
+ * value on Prepare Bulk Set, and the PLANNED column on Auction Results. That
+ * is deliberate — one question ("over what period?") should not have four
+ * answers — but it is invisible from here, so the control says so.
  */
 export default function ReportsScreen() {
   const { ready, gate } = useLoadedStore();
@@ -40,7 +46,6 @@ export default function ReportsScreen() {
   const externalFactories = selectActiveExternalFactories(state);
   const teaItems = selectActiveTeaItems(state);
   const setRange = useTeaStore((s) => s.setRange);
-  const resetRange = useTeaStore((s) => s.resetRange);
   const { range } = state;
 
   const [filter, setFilter] = useState<Filter>('all');
@@ -56,20 +61,16 @@ export default function ReportsScreen() {
     filter === 'all' ? true : filter === 'above' ? c.verdict === 'above' : c.verdict === 'below',
   );
 
-  // Quick range presets over the auctions we actually have.
-  const presets = useMemo(() => {
-    const sorted = [...sellingPeriods].sort((a, b) => a.auctionDate.localeCompare(b.auctionDate));
-    const dates = sorted.map((p) => p.auctionDate);
-    const build = (count: number) => {
-      const slice = dates.slice(-count);
-      return slice.length > 0 ? { from: slice[0]!, to: dates.at(-1)! } : null;
-    };
-    return [
-      { label: 'All auctions', value: null },
-      { label: 'Last 3', value: build(3) },
-      { label: 'Last 5', value: build(5) },
-    ];
-  }, [sellingPeriods]);
+  /*
+   * Quick ranges over the auctions we actually have.
+   *
+   * "All auctions" carries a real range rather than null. As null it could
+   * never match the range in the store, so it never lit — the screen opened
+   * showing all six auctions with nothing selected, which reads as broken.
+   * A real range also lets it be de-duplicated against "Last 5" on a database
+   * with five auctions, where the two mean the same thing.
+   */
+  const presets = useMemo(() => rangePresets(sellingPeriods, { counts: [3, 5] }), [sellingPeriods]);
 
   const allPeriods = periodsInRange(state, range);
 
@@ -79,7 +80,13 @@ export default function ReportsScreen() {
     <SafeAreaView style={styles.safeArea}>
       <Header
         greeting="Auction History"
-        subTitle={`${formatAuctionDate(range.from)} — ${formatAuctionDate(range.to)} · ${allPeriods.length} auctions`}
+        subTitle={
+          allPeriods.length === 0
+            ? 'No auctions in this range'
+            : `${formatAuctionDate(range.from)} — ${formatAuctionDate(range.to)} · ${
+                allPeriods.length
+              } auction${allPeriods.length === 1 ? '' : 's'}`
+        }
         notificationCount={0}
       />
 
@@ -92,16 +99,17 @@ export default function ReportsScreen() {
         <View style={styles.controlsCard}>
           <View style={styles.controlGroup}>
             <Text style={styles.controlLabel}>RANGE</Text>
+            <Text style={styles.controlHint}>
+              Shared with the Dashboard, Bulk Sets and Auction Results.
+            </Text>
             <View style={styles.chipRow}>
               {presets.map((preset) => {
-                const active = preset.value
-                  ? range.from === preset.value.from && range.to === preset.value.to
-                  : false;
+                const active = range.from === preset.value.from && range.to === preset.value.to;
                 return (
                   <Pressable
                     key={preset.label}
                     style={[styles.chip, active && styles.chipActive]}
-                    onPress={() => (preset.value ? setRange(preset.value) : resetRange())}>
+                    onPress={() => setRange(preset.value)}>
                     <Text style={[styles.chipText, active && styles.chipTextActive]}>
                       {preset.label}
                     </Text>
@@ -113,6 +121,7 @@ export default function ReportsScreen() {
 
           <View style={styles.controlGroup}>
             <Text style={styles.controlLabel}>SHOW</Text>
+            <Text style={styles.controlHint}>Filters the table below only.</Text>
             <View style={styles.chipRow}>
               {(['all', 'above', 'below'] as Filter[]).map((option) => (
                 <Pressable
@@ -149,7 +158,14 @@ export default function ReportsScreen() {
             <Text
               style={[
                 styles.summaryValue,
-                { color: overall.verdict === 'below' ? Colors.below : Colors.above },
+                {
+                  color:
+                    overall.verdict === 'unknown'
+                      ? Colors.textSecondary
+                      : overall.verdict === 'below'
+                        ? Colors.below
+                        : Colors.above,
+                },
               ]}>
               {formatSignedRs(overall.differencePerKg)}
             </Text>
@@ -178,7 +194,7 @@ export default function ReportsScreen() {
               <Text style={[styles.th, styles.colNum]}>Our Bulk</Text>
               <Text style={[styles.th, styles.colNum]}>Market</Text>
               <Text style={[styles.th, styles.colNum]}>Difference</Text>
-              <Text style={[styles.th, styles.colVerdict]}>Result</Text>
+              <Text style={[styles.th, styles.colVerdict, styles.thRight]}>Result</Text>
             </View>
 
             {visible.length === 0 && (
@@ -333,6 +349,7 @@ const styles = StyleSheet.create({
   },
   controlGroup: { gap: 8, minWidth: 200, flex: 1 },
   controlLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.8 },
+  controlHint: { fontSize: 11, color: Colors.textSecondary, marginTop: -4 },
   chipRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   chip: {
     paddingHorizontal: 14,
@@ -387,6 +404,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   th: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, textTransform: 'uppercase' },
+  // colVerdict right-aligns its cell with alignItems, which a Text ignores —
+  // so the header needs to be told separately.
+  thRight: { textAlign: 'right' },
   tableRow: {
     flexDirection: 'row',
     alignItems: 'center',

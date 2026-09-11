@@ -330,9 +330,8 @@ function MetricCard({
         {unit ? <Text style={styles.unitText}> {unit}</Text> : null}
       </Text>
       <Text style={styles.subtext}>{caption}</Text>
-      {/* Last, and pinned to the floor: only one card carries a badge, and
-          above the figure it pushed that card's number a row below every
-          other card's. Down here it fills slack the neighbours already had. */}
+      {/* Last: only one card carries a badge, and above the figure it pushed
+          that card's number a row below every other card's. */}
       {badge ? <View style={styles.cardBadge}>{badge}</View> : null}
     </View>
   );
@@ -353,10 +352,32 @@ const styles = StyleSheet.create({
   scrollContent: { padding: 20, gap: 20, paddingBottom: 48 },
   flexOne: { flex: 1, minWidth: 220 },
 
-  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
+  /*
+   * A wrapping row of cards: four across on a desktop, fewer as it narrows,
+   * one on a phone.
+   *
+   * `alignContent: 'flex-start'` matters once they wrap. Without it the rows
+   * of cards share out any spare height between them, which is why the one
+   * card with a badge grew a field of empty space on a phone.
+   */
+  metricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignContent: 'flex-start',
+    gap: 16,
+  },
   card: {
-    flex: 1,
-    minWidth: 220,
+    /*
+     * `flexBasis` is what decides where the row breaks, so it has to be the
+     * real preferred width — `flex: 1` sets it to zero, which told the layout
+     * every card fits on one line and then `minWidth` shoved them off the
+     * screen. `minWidth: 0` lets the last card on a line shrink instead of
+     * overflowing.
+     */
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 220,
+    minWidth: 0,
     backgroundColor: Colors.card,
     borderRadius: 12,
     padding: 18,
@@ -375,14 +396,25 @@ const styles = StyleSheet.create({
   },
   iconBox: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   metricValue: { fontSize: 22, fontWeight: '700', color: Colors.text },
-  cardBadge: { marginTop: 'auto', paddingTop: 2, flexDirection: 'row' },
+  // Sits directly under the caption. It used to be pinned to the card floor
+  // with `marginTop: 'auto'`, which only looks deliberate while the card is
+  // stretched taller than its content — alone on a phone row it is not, and
+  // the badge was left adrift below a gap.
+  cardBadge: { paddingTop: 2, flexDirection: 'row' },
   unitText: { fontSize: 13, fontWeight: '500', color: Colors.textSecondary },
   subtext: { fontSize: 11, color: Colors.textSecondary },
 
-  quickActionsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
+  quickActionsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignContent: 'flex-start',
+    gap: 16,
+  },
   quickActionButton: {
-    flex: 1,
-    minWidth: 260,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 260,
+    minWidth: 0,
     backgroundColor: Colors.card,
     borderRadius: 12,
     padding: 16,
@@ -426,7 +458,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     gap: 12,
   },
-  expectedBlock: { flex: 1, minWidth: 130, gap: 2 },
+  expectedBlock: { flexGrow: 1, flexShrink: 1, flexBasis: 130, minWidth: 0, gap: 2 },
   expectedDivider: { width: 1, backgroundColor: Colors.border },
   expectedLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.6 },
   expectedValue: { fontSize: 20, fontWeight: '700', color: Colors.text },

@@ -20,12 +20,14 @@ import {
   compare,
   formatAuctionDate,
   formatKg,
+  formatMonthYear,
   formatPercent,
   formatRs,
   formatSignedRs,
   marketAverage,
 } from '@/domain/averaging';
-import type { Comparison } from '@/domain/types';
+import { auctionBounds, isIsoDate, rangePresets } from '@/domain/date-range';
+import type { Comparison, DateRange, SellingPeriod } from '@/domain/types';
 import {
   selectActiveTeaItems,
   selectLatestBulkSet,
@@ -76,6 +78,7 @@ export default function AuctionResultsScreen() {
   const blendOurBulkResult = useTeaStore((s) => s.blendOurBulkResult);
   const recordExternalResults = useTeaStore((s) => s.recordExternalResults);
   const markPeriodSold = useTeaStore((s) => s.markPeriodSold);
+  const addSellingPeriod = useTeaStore((s) => s.addSellingPeriod);
   const saving = useTeaStore((s) => s.saving);
 
   const orderedPeriods = useMemo(
@@ -86,13 +89,127 @@ export default function AuctionResultsScreen() {
   const [periodId, setPeriodId] = useState('');
   const period = sellingPeriods.find((p) => p.id === periodId) ?? null;
 
+  /**
+   * The auction this screen is for unless you say otherwise: the latest by
+   * date, which is either the one about to be recorded or the one just sold.
+   */
+  const currentPeriod = orderedPeriods[0] ?? null;
+
   // The cache fills after the first render, so the default auction is chosen
   // when the data lands — a useState initialiser would only ever see an empty
   // store and leave the screen with nothing selected. There is no legitimate
   // "no auction" state here, so an empty id is always safe to replace.
   useEffect(() => {
-    if (periodId === '' && orderedPeriods.length > 0) setPeriodId(orderedPeriods[0]!.id);
-  }, [periodId, orderedPeriods]);
+    if (periodId === '' && currentPeriod) setPeriodId(currentPeriod.id);
+  }, [periodId, currentPeriod]);
+
+  // ------------------------------------------------------ choosing an auction
+  //
+  // Six auctions fit on a row; sixty will not, and the list was already the
+  // tallest thing above the fold. So the current auction stands alone and the
+  // rest are behind a search — which is also the only thing that scales.
+  //
+  // Both filters are LOCAL to this picker: they decide which auctions you can
+  // pick from, never which auctions the figures below are drawn from. That
+  // range lives in the store and belongs to the whole app.
+  const [picking, setPicking] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [auctionQuery, setAuctionQuery] = useState('');
+  const [pickRange, setPickRange] = useState<DateRange | null>(null);
+  const [fromDraft, setFromDraft] = useState('');
+  const [toDraft, setToDraft] = useState('');
+  const [rangeError, setRangeError] = useState<string | null>(null);
+  const [newAuction, setNewAuction] = useState({ label: '', date: '' });
+
+  const pickBounds = useMemo(() => auctionBounds(sellingPeriods), [sellingPeriods]);
+
+  const appliedPick = pickRange ?? pickBounds;
+  const fromValue = fromDraft || appliedPick.from;
+  const toValue = toDraft || appliedPick.to;
+
+  const applyPick = (next: DateRange) => {
+    setPickRange(next);
+    setFromDraft(next.from);
+    setToDraft(next.to);
+    setRangeError(null);
+  };
+
+  const applyTypedPick = () => {
+    if (!isIsoDate(fromValue) || !isIsoDate(toValue)) {
+      setRangeError('Dates must be written as YYYY-MM-DD, for example 2026-06-03.');
+      return;
+    }
+    if (fromValue > toValue) {
+      setRangeError('The start date must not be after the end date.');
+      return;
+    }
+    applyPick({ from: fromValue, to: toValue });
+  };
+
+  const pickPresets = useMemo(() => rangePresets(sellingPeriods), [sellingPeriods]);
+
+  // Label or date, so "26", "Sep" and "2026-09-16" all find the same auction.
+  const auctionNeedle = auctionQuery.trim().toLowerCase();
+  const visiblePeriods = orderedPeriods.filter((p) => {
+    if (p.auctionDate < appliedPick.from || p.auctionDate > appliedPick.to) return false;
+    if (auctionNeedle === '') return true;
+    return `${p.label} ${p.auctionDate} ${formatAuctionDate(p.auctionDate)}`
+      .toLowerCase()
+      .includes(auctionNeedle);
+  });
+
+  const openPicker = () => {
+    const next = !picking;
+    setPicking(next);
+    if (next) setAdding(false);
+  };
+
+  const openAdd = () => {
+    const next = !adding;
+    setAdding(next);
+    if (next) {
+      setPicking(false);
+      // Suggested, not imposed: both fields stay editable.
+      setNewAuction({
+        label: nextAuctionLabel(sellingPeriods),
+        date: nextAuctionDate(sellingPeriods),
+      });
+    }
+  };
+
+  const addAuction = async () => {
+    const label = newAuction.label.trim();
+    const date = newAuction.date.trim();
+    if (label === '') {
+      setSavedNotice({ text: 'An auction needs a label.', tone: 'error' });
+      return;
+    }
+    if (!isIsoDate(date)) {
+      setSavedNotice({
+        text: 'An auction date must be written as YYYY-MM-DD, for example 2026-10-07.',
+        tone: 'error',
+      });
+      return;
+    }
+    try {
+      const created = await addSellingPeriod(label, date);
+      setAdding(false);
+      // Switch to it: adding an auction here is how you start recording it.
+      switchPeriod(created.id);
+      setSavedNotice({
+        text: `Added ${created.label} on ${formatAuctionDate(created.auctionDate)}. You are now recording for it.`,
+        tone: 'ok',
+      });
+    } catch (error) {
+      setSavedNotice({
+        text:
+          error instanceof ApiError
+            ? `Not added — ${error.message}`
+            : 'Not added — the API could not be reached.',
+        tone: 'error',
+      });
+    }
+  };
 
   // Saved values for this auction seed the inputs, so the form opens showing
   // what is already on record rather than blank boxes.
@@ -387,30 +504,192 @@ export default function AuctionResultsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
 
-        {/* Which auction */}
+        {/* Which auction — the current one, with the rest behind a search */}
         <View style={styles.selectorCard}>
-          <Text style={styles.selectorLabel}>AUCTION</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.pillRow}>
-              {orderedPeriods.map((p) => {
-                const active = p.id === periodId;
-                return (
-                  <Pressable
-                    key={p.id}
-                    style={[styles.pill, active && styles.pillActive]}
-                    onPress={() => switchPeriod(p.id)}>
-                    <Text style={[styles.pillTitle, active && styles.pillTitleActive]}>
-                      {p.label}
-                    </Text>
-                    <Text style={[styles.pillMeta, active && styles.pillMetaActive]}>
-                      {formatAuctionDate(p.auctionDate)}
-                    </Text>
-                    {p.status === 'upcoming' && <View style={styles.upcomingDot} />}
-                  </Pressable>
-                );
-              })}
+          <View style={styles.selectorHead}>
+            <Text style={styles.selectorLabel}>AUCTION</Text>
+            <View style={styles.selectorActions}>
+              <Pressable style={styles.linkButton} onPress={openPicker}>
+                <Text style={styles.linkButtonText}>{picking ? 'Done' : 'Change'}</Text>
+              </Pressable>
+              <Pressable style={styles.linkButton} onPress={openAdd}>
+                <Text style={styles.linkButtonText}>{adding ? 'Cancel' : '+ New auction'}</Text>
+              </Pressable>
             </View>
-          </ScrollView>
+          </View>
+
+          {period ? (
+            <View style={styles.chosenRow}>
+              <View style={styles.flexOne}>
+                <Text style={styles.chosenTitle}>{period.label}</Text>
+                <Text style={styles.chosenMeta}>
+                  {formatAuctionDate(period.auctionDate)} ·{' '}
+                  {period.status === 'upcoming' ? 'not yet sold' : 'sold'}
+                </Text>
+              </View>
+              {period.status === 'upcoming' && <View style={styles.upcomingDot} />}
+            </View>
+          ) : (
+            <Text style={styles.emptyText}>No auction selected.</Text>
+          )}
+
+          {/* Only when you have wandered off the current auction, so the normal
+              case carries no extra chrome. */}
+          {currentPeriod && period && period.id !== currentPeriod.id && (
+            <Pressable onPress={() => switchPeriod(currentPeriod.id)}>
+              <Text style={styles.backToCurrent}>
+                This is an earlier auction — back to {currentPeriod.label}
+              </Text>
+            </Pressable>
+          )}
+
+          {adding && (
+            <View style={styles.addForm}>
+              <View style={[styles.addField, styles.addFieldWide]}>
+                <Text style={styles.fieldLabel}>LABEL</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newAuction.label}
+                  onChangeText={(label) => setNewAuction((a) => ({ ...a, label }))}
+                  placeholder="Auction 27 · Oct 2026"
+                  placeholderTextColor={Colors.textSecondary}
+                />
+              </View>
+              <View style={styles.addField}>
+                <Text style={styles.fieldLabel}>DATE</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newAuction.date}
+                  onChangeText={(date) => setNewAuction((a) => ({ ...a, date }))}
+                  placeholder="2026-10-07"
+                  placeholderTextColor={Colors.textSecondary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+              <Pressable
+                style={[styles.applyButton, saving && styles.busy]}
+                disabled={saving}
+                onPress={addAuction}>
+                <Text style={styles.applyButtonText}>{saving ? 'Adding…' : 'Add'}</Text>
+              </Pressable>
+              <Text style={styles.addNote}>
+                Suggested from the auctions already on file — three weeks on from the last one.
+                Change either field before adding.
+              </Text>
+            </View>
+          )}
+
+          {picking && (
+            <View style={styles.pickerPanel}>
+              <View style={styles.searchField}>
+                <TextInput
+                  style={styles.searchInput}
+                  value={auctionQuery}
+                  onChangeText={setAuctionQuery}
+                  placeholder="Search by label or date…"
+                  placeholderTextColor={Colors.textSecondary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {auctionQuery !== '' && (
+                  <Pressable style={styles.clearButton} onPress={() => setAuctionQuery('')}>
+                    <Text style={styles.clearButtonText}>Clear</Text>
+                  </Pressable>
+                )}
+              </View>
+
+              <View style={styles.pillRow}>
+                {pickPresets.map((preset) => {
+                  const active =
+                    appliedPick.from === preset.value.from && appliedPick.to === preset.value.to;
+                  return (
+                    <Pressable
+                      key={preset.label}
+                      style={[styles.filterPill, active && styles.filterPillActive]}
+                      onPress={() => applyPick(preset.value)}>
+                      <Text
+                        style={[styles.filterPillText, active && styles.filterPillTextActive]}>
+                        {preset.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <View style={styles.dateRow}>
+                <View style={styles.dateField}>
+                  <Text style={styles.fieldLabel}>FROM</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={fromValue}
+                    onChangeText={setFromDraft}
+                    placeholder={pickBounds.from}
+                    placeholderTextColor={Colors.textSecondary}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+                <View style={styles.dateField}>
+                  <Text style={styles.fieldLabel}>TO</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={toValue}
+                    onChangeText={setToDraft}
+                    placeholder={pickBounds.to}
+                    placeholderTextColor={Colors.textSecondary}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+                <Pressable style={styles.applyButton} onPress={applyTypedPick}>
+                  <Text style={styles.applyButtonText}>Apply</Text>
+                </Pressable>
+                <Pressable style={styles.outlineButton} onPress={() => applyPick(pickBounds)}>
+                  <Text style={styles.outlineButtonText}>Reset</Text>
+                </Pressable>
+              </View>
+
+              {rangeError && <Text style={styles.errorText}>{rangeError}</Text>}
+
+              <Text style={styles.searchCount}>
+                {visiblePeriods.length} of {orderedPeriods.length} auction
+                {orderedPeriods.length === 1 ? '' : 's'} · this only filters the list, not the
+                figures below
+              </Text>
+
+              {visiblePeriods.length === 0 ? (
+                <Text style={styles.emptyText}>
+                  No auction matches. Widen the dates, clear the search, or add a new auction.
+                </Text>
+              ) : (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={styles.pillRow}>
+                    {visiblePeriods.map((p) => {
+                      const active = p.id === periodId;
+                      return (
+                        <Pressable
+                          key={p.id}
+                          style={[styles.pill, active && styles.pillActive]}
+                          onPress={() => {
+                            switchPeriod(p.id);
+                            setPicking(false);
+                          }}>
+                          <Text style={[styles.pillTitle, active && styles.pillTitleActive]}>
+                            {p.label}
+                          </Text>
+                          <Text style={[styles.pillMeta, active && styles.pillMetaActive]}>
+                            {formatAuctionDate(p.auctionDate)}
+                          </Text>
+                          {p.status === 'upcoming' && <View style={styles.upcomingDot} />}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              )}
+            </View>
+          )}
         </View>
 
         {savedNotice && (
@@ -922,6 +1201,33 @@ function parsePrice(raw: string): number | null {
   return Math.round(value * 100) / 100;
 }
 
+/**
+ * Three weeks on from the latest auction — the Colombo cadence, and the only
+ * guess worth offering. Today's date if there is nothing to count from.
+ */
+function nextAuctionDate(periods: readonly SellingPeriod[]): string {
+  const latest = [...periods].map((p) => p.auctionDate).sort().at(-1);
+  if (!latest) return new Date().toISOString().slice(0, 10);
+  const next = new Date(`${latest}T00:00:00.000Z`);
+  next.setUTCDate(next.getUTCDate() + 21);
+  return next.toISOString().slice(0, 10);
+}
+
+/**
+ * "Auction 26 · Sep 2026" → "Auction 27 · Oct 2026".
+ *
+ * The number follows the highest already used rather than the count, so a
+ * deleted or back-filled auction does not hand out a number twice.
+ */
+function nextAuctionLabel(periods: readonly SellingPeriod[]): string {
+  const numbers = periods
+    .map((p) => Number(/auction\s*(\d+)/i.exec(p.label)?.[1] ?? NaN))
+    .filter((n) => Number.isFinite(n));
+  const next = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+
+  return `Auction ${next} · ${formatMonthYear(nextAuctionDate(periods))}`;
+}
+
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: Colors.background },
   container: { flex: 1 },
@@ -936,6 +1242,81 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   selectorLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.8 },
+  selectorHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  selectorActions: { flexDirection: 'row', gap: 14, marginLeft: 'auto' },
+  linkButton: { paddingVertical: 2 },
+  linkButtonText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
+
+  chosenRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  flexOne: { flex: 1, minWidth: 0 },
+  chosenTitle: { fontSize: 17, fontWeight: '700', color: Colors.text },
+  chosenMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  backToCurrent: { fontSize: 12, fontWeight: '600', color: Colors.primary },
+
+  pickerPanel: {
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingTop: 14,
+  },
+  filterPill: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: Colors.background,
+  },
+  filterPillActive: { backgroundColor: Colors.primaryLight, borderColor: Colors.primary },
+  filterPillText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
+  filterPillTextActive: { color: Colors.primary },
+
+  dateRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: 10 },
+  dateField: { flexGrow: 1, flexBasis: 150, minWidth: 130, gap: 4 },
+  fieldLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.8 },
+  textInput: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  applyButton: {
+    backgroundColor: Colors.primary,
+    borderRadius: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+  },
+  applyButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  outlineButton: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: Colors.background,
+  },
+  outlineButtonText: { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
+  errorText: { fontSize: 12, color: Colors.below, fontWeight: '600' },
+  emptyText: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18 },
+  busy: { opacity: 0.6 },
+
+  addForm: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-end',
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingTop: 14,
+  },
+  addField: { flexGrow: 1, flexBasis: 150, minWidth: 140, gap: 4 },
+  addFieldWide: { flexBasis: 230 },
+  addNote: { flexBasis: '100%', fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   pillRow: { flexDirection: 'row', gap: 8 },
   pill: {
     backgroundColor: Colors.background,

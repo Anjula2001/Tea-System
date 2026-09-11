@@ -9,6 +9,7 @@ import { useLoadedStore } from '@/components/data-state';
 import Header from '@/components/header';
 import { LeafIcon, PlusIcon } from '@/components/ui-icons';
 import { formatAuctionDate, formatPercent, formatRs } from '@/domain/averaging';
+import { auctionBounds, isIsoDate, rangePresets } from '@/domain/date-range';
 import type { DateRange } from '@/domain/types';
 import { periodsInRange, selectItemPriceBreakdown, useTeaStore } from '@/store/tea-store';
 
@@ -37,13 +38,7 @@ export default function ItemAveragesScreen() {
     () => [...sellingPeriods].sort((a, b) => a.auctionDate.localeCompare(b.auctionDate)),
     [sellingPeriods],
   );
-  const bounds = useMemo<DateRange>(
-    () =>
-      sorted.length > 0
-        ? { from: sorted[0]!.auctionDate, to: sorted.at(-1)!.auctionDate }
-        : { from: '1970-01-01', to: '9999-12-31' },
-    [sorted],
-  );
+  const bounds = useMemo(() => auctionBounds(sorted), [sorted]);
 
   // The applied range, and the two fields being edited toward it. Keeping them
   // apart means a half-typed date never blanks the table underneath.
@@ -77,22 +72,17 @@ export default function ItemAveragesScreen() {
 
   /** Shortcuts over the auctions we actually have, newest-anchored. */
   const presets = useMemo(() => {
-    const dates = sorted.map((p) => p.auctionDate);
-    const lastN = (count: number) => {
-      const slice = dates.slice(-count);
-      return slice.length > 0 ? { from: slice[0]!, to: dates.at(-1)! } : null;
-    };
-    const thisYear = () => {
-      const year = dates.at(-1)?.slice(0, 4);
-      return year ? { from: `${year}-01-01`, to: `${year}-12-31` } : null;
-    };
-    return [
-      { label: 'All auctions', value: bounds },
-      { label: 'Last 3', value: lastN(3) },
-      { label: 'Last 6', value: lastN(6) },
-      { label: 'This year', value: thisYear() },
-    ].filter((p): p is { label: string; value: DateRange } => p.value !== null);
-  }, [sorted, bounds]);
+    // "This year" is not a "last N", so it rides along as an extra — and goes
+    // through the same de-duplication, which matters in a year whose auctions
+    // are the only ones on file.
+    const year = sorted.at(-1)?.auctionDate.slice(0, 4);
+    return rangePresets(sorted, {
+      counts: [3, 6],
+      extra: [
+        year ? { label: 'This year', value: { from: `${year}-01-01`, to: `${year}-12-31` } } : null,
+      ],
+    });
+  }, [sorted]);
 
   // ------------------------------------------------------------------ CRUD
   const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null);
@@ -457,13 +447,6 @@ export default function ItemAveragesScreen() {
       </ScrollView>
     </SafeAreaView>
   );
-}
-
-/** A calendar-valid YYYY-MM-DD, so 2026-02-31 is rejected rather than shifted. */
-function isIsoDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 const styles = StyleSheet.create({

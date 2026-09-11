@@ -166,9 +166,24 @@ export function formatPercent(value: number | null): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 export function formatAuctionDate(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
   if (!y || !m || !d) return iso;
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${d} ${months[m - 1]} ${y}`;
+  return `${d} ${MONTHS[m - 1]} ${y}`;
+}
+
+/**
+ * "2026-09-16" → "Sep 2026", the form auction labels are written in.
+ *
+ * Spelled from the same table as `formatAuctionDate` rather than from
+ * `toLocaleString`: Intl renders September as "Sept" under some ICU versions
+ * and "Sep" under others, so a generated label would disagree with the ones
+ * already on file depending on the device that generated it.
+ */
+export function formatMonthYear(iso: string): string {
+  const [y, m] = iso.split('-').map(Number);
+  if (!y || !m) return iso;
+  return `${MONTHS[m - 1]} ${y}`;
 }

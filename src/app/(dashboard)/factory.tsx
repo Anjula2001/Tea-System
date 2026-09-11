@@ -9,6 +9,7 @@ import { useLoadedStore } from '@/components/data-state';
 import Header from '@/components/header';
 import PriceChart from '@/components/price-chart';
 import { formatAuctionDate, formatPercent, formatRs } from '@/domain/averaging';
+import { auctionBounds, isIsoDate, rangePresets } from '@/domain/date-range';
 import type { DateRange } from '@/domain/types';
 import {
   periodsInRange,
@@ -51,13 +52,7 @@ export default function FactoryScreen() {
     () => [...sellingPeriods].sort((a, b) => a.auctionDate.localeCompare(b.auctionDate)),
     [sellingPeriods],
   );
-  const bounds = useMemo<DateRange>(
-    () =>
-      sorted.length > 0
-        ? { from: sorted[0]!.auctionDate, to: sorted.at(-1)!.auctionDate }
-        : { from: '1970-01-01', to: '9999-12-31' },
-    [sorted],
-  );
+  const bounds = useMemo(() => auctionBounds(sorted), [sorted]);
 
   const [range, setRange] = useState<DateRange | null>(null);
   const [fromDraft, setFromDraft] = useState('');
@@ -97,19 +92,7 @@ export default function FactoryScreen() {
     apply({ from: fromValue, to: toValue });
   };
 
-  const presets = useMemo(() => {
-    const dates = sorted.map((p) => p.auctionDate);
-    const lastN = (count: number) => {
-      const slice = dates.slice(-count);
-      return slice.length > 0 ? { from: slice[0]!, to: dates.at(-1)! } : null;
-    };
-    return [
-      { label: 'All auctions', value: bounds },
-      { label: 'Last 3', value: lastN(3) },
-      { label: 'Last 6', value: lastN(6) },
-      { label: 'Last 12', value: lastN(12) },
-    ].filter((p): p is { label: string; value: DateRange } => p.value !== null);
-  }, [sorted, bounds]);
+  const presets = useMemo(() => rangePresets(sorted, { counts: [3, 6, 12] }), [sorted]);
 
   const row = selectFactoryPriceBreakdown(state, applied).find((r) => r.externalFactoryId === id) ?? null;
   const periods = periodsInRange(state, applied);
@@ -517,13 +500,6 @@ function Stat({
       {meta && <Text style={styles.statMeta}>{meta}</Text>}
     </View>
   );
-}
-
-/** A calendar-valid YYYY-MM-DD, so 2026-02-31 is rejected rather than shifted. */
-function isIsoDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 const styles = StyleSheet.create({

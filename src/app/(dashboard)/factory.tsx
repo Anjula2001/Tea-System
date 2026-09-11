@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
-import { useLoadedStore } from '@/components/data-state';
+import { useScreenData } from '@/components/data-state';
 import Header from '@/components/header';
 import PriceChart from '@/components/price-chart';
 import { formatAuctionDate, formatPercent, formatRs } from '@/domain/averaging';
@@ -35,7 +35,8 @@ import {
  * last quarter must not re-base the benchmark everywhere else.
  */
 export default function FactoryScreen() {
-  const { ready, gate } = useLoadedStore();
+  // one other factory, across the auctions in range
+  const { ready, gate } = useScreenData(['externalResults', 'factories', 'periods', 'profile']);
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
 

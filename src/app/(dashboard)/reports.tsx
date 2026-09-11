@@ -3,7 +3,7 @@ import { ScrollView, View, Text, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors } from '@/constants/colors';
-import { useLoadedStore } from '@/components/data-state';
+import { useScreenData } from '@/components/data-state';
 import Header from '@/components/header';
 import VerdictBadge from '@/components/verdict-badge';
 import { ChartIcon } from '@/components/ui-icons';
@@ -38,7 +38,8 @@ type Filter = 'all' | 'above' | 'below';
  * answers — but it is invisible from here, so the control says so.
  */
 export default function ReportsScreen() {
-  const { ready, gate } = useLoadedStore();
+  // every auction: ours, theirs, and the gap — but no bulk sets
+  const { ready, gate } = useScreenData(['bulkResults', 'externalResults', 'factories', 'itemPrices', 'periods', 'profile', 'teaItems']);
   const state = useTeaStore();
   const { sellingPeriods } = state;
   // The same factories the benchmark counts — a retired one is left out of

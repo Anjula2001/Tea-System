@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
-import { useLoadedStore } from '@/components/data-state';
+import { useScreenData } from '@/components/data-state';
 import Header from '@/components/header';
 import {
   FilterPills,
@@ -68,7 +68,8 @@ import {
  * per grade. Re-saving a value records a correction rather than an error.
  */
 export default function AuctionResultsScreen() {
-  const { ready, gate } = useLoadedStore();
+  // records all three kinds of price, and values the set being sold
+  const { ready, gate } = useScreenData(['bulkResults', 'bulkSets', 'externalResults', 'factories', 'itemPrices', 'periods', 'profile', 'teaItems']);
   const { width } = useWindowDimensions();
   const state = useTeaStore();
   const { sellingPeriods } = state;

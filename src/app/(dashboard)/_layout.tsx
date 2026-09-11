@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, useWindowDimensions, Platform } from 'react-native';
 import { Colors } from '@/constants/colors';
 import { HomeIcon, MoneyIcon, PlusIcon, ChartIcon, LeafIcon, WalletIcon } from '@/components/ui-icons';
@@ -50,6 +50,14 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
   const isDesktop = Platform.OS === 'web' && width >= 768;
   const upcoming = useTeaStore(selectUpcomingPeriod);
   const profile = useTeaStore((s) => s.factoryProfile);
+  const ensure = useTeaStore((s) => s.ensure);
+
+  // The chrome is drawn outside every screen's gate, so it fetches its own two
+  // resources rather than waiting for whichever tab happens to open first.
+  // Both are one request and are what every screen needs anyway.
+  useEffect(() => {
+    void ensure(['profile', 'periods']);
+  }, [ensure]);
 
   const tabRoutes = [
     { name: 'index', label: 'Dashboard', icon: HomeIcon },

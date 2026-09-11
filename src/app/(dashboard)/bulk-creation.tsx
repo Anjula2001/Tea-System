@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
-import { useLoadedStore } from '@/components/data-state';
+import { useScreenData } from '@/components/data-state';
 import Header from '@/components/header';
 import {
   FilterPills,
@@ -58,7 +58,8 @@ import {
  * as the failure it is rather than as a success message over nothing saved.
  */
 export default function BulkSetScreen() {
-  const { ready, gate } = useLoadedStore();
+  // values a set at our item averages, against the market benchmark
+  const { ready, gate } = useScreenData(['bulkSets', 'externalResults', 'factories', 'itemPrices', 'periods', 'profile', 'teaItems']);
   const state = useTeaStore();
   const { bulkSets, sellingPeriods, range } = state;
   // A retired grade cannot go into a new set; sets that already hold one keep
@@ -94,7 +95,7 @@ export default function BulkSetScreen() {
    */
   const seeded = useRef(false);
   useEffect(() => {
-    if (seeded.current || state.status !== 'ready') return;
+    if (seeded.current || state.resources.bulkSets.status !== 'ready') return;
     seeded.current = true;
 
     const latest = selectLatestPlannedBulkSet(state);

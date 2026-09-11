@@ -1,39 +1,73 @@
-import React, { useEffect } from 'react';
+import { useFocusEffect } from 'expo-router';
+import React, { useCallback } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { API_BASE_URL } from '@/api';
 import { Colors } from '@/constants/colors';
-import { useTeaStore } from '@/store/tea-store';
+import { useTeaStore, type Resource } from '@/store/tea-store';
 
 /**
- * The gate every screen sits behind.
+ * The gate a screen sits behind, and the request that fills it.
  *
- * Nothing in this app is worth drawing over stale or absent data — a dashboard
- * of zeroes reads as "we sold nothing", not as "the API is down". So a screen
- * renders its real content only once the cache is filled, and otherwise says
- * plainly which of the two is happening.
+ * A screen names the resources it reads, and the fetch happens when the tab is
+ * FOCUSED — not when it mounts. The navigator keeps screens alive in the
+ * background once visited, so a mount-time fetch fires for a tab nobody is
+ * looking at and never fires again when they come back to it. Focus is the
+ * event that means "show me this now".
+ *
+ * The first visit fetches and waits. Every later visit re-fetches the same
+ * resources and keeps the current figures on screen while it does, so clicking
+ * a tab always asks the backend for that tab's data — the point of the
+ * exercise — without the screen blanking on every navigation. This is what
+ * keeps a busy database from being read through a cache that was filled once
+ * at page load and never again.
+ *
+ * Nothing here is worth drawing over absent data — a dashboard of zeroes reads
+ * as "we sold nothing", not as "the API is down" — so the screen renders only
+ * once its own resources are ready, and otherwise says which of the two is
+ * happening. A resource some other screen needed and failed to get is not this
+ * screen's problem and does not block it.
  *
  * The failure case names the address it tried, because in development the
  * answer is almost always that the backend is not running or the phone is
  * pointed at the wrong host, and a bare "failed to load" sends someone hunting
  * in the wrong place.
  */
-export function useLoadedStore(): { ready: boolean; gate: React.ReactElement | null } {
-  const status = useTeaStore((s) => s.status);
-  const error = useTeaStore((s) => s.error);
-  const load = useTeaStore((s) => s.load);
+export function useScreenData(needs: readonly Resource[]): {
+  ready: boolean;
+  gate: React.ReactElement | null;
+} {
+  const ensure = useTeaStore((s) => s.ensure);
+  const resources = useTeaStore((s) => s.resources);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // A fresh array literal every render, so the effect keys on the contents.
+  const key = needs.join(',');
 
-  if (status === 'ready') return { ready: true, gate: null };
+  useFocusEffect(
+    useCallback(() => {
+      void ensure(key.split(',') as Resource[], { revalidate: true });
+    }, [ensure, key]),
+  );
 
-  return {
-    ready: false,
-    gate: status === 'error' ? <LoadFailed message={error} onRetry={() => load({ force: true })} /> : <Loading />,
-  };
+  const mine = needs.map((need) => resources[need]);
+  const failed = mine.find((r) => r.status === 'error');
+
+  if (failed) {
+    return {
+      ready: false,
+      gate: (
+        <LoadFailed
+          message={failed.error}
+          onRetry={() => void ensure(needs, { force: true })}
+        />
+      ),
+    };
+  }
+
+  if (mine.every((r) => r.status === 'ready')) return { ready: true, gate: null };
+
+  return { ready: false, gate: <Loading /> };
 }
 
 function Loading() {

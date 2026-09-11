@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
-import { useLoadedStore } from '@/components/data-state';
+import { useScreenData } from '@/components/data-state';
 import Header from '@/components/header';
 import PriceChart from '@/components/price-chart';
 import { formatAuctionDate, formatPercent, formatRs } from '@/domain/averaging';
@@ -27,7 +27,8 @@ import { periodsInRange, selectItemPriceBreakdown, useTeaStore } from '@/store/t
  * quarter must not re-base the planning forecast.
  */
 export default function TeaItemScreen() {
-  const { ready, gate } = useLoadedStore();
+  // one grade, priced across the auctions in range
+  const { ready, gate } = useScreenData(['itemPrices', 'periods', 'profile', 'teaItems']);
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
 

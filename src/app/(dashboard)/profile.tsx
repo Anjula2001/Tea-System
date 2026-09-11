@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
-import { useLoadedStore } from '@/components/data-state';
+import { useScreenData } from '@/components/data-state';
 import Header from '@/components/header';
 import { formatAuctionDate } from '@/domain/averaging';
 import { selectActiveExternalFactories, useTeaStore } from '@/store/tea-store';
@@ -23,7 +23,8 @@ import { selectActiveExternalFactories, useTeaStore } from '@/store/tea-store';
  * function without it.
  */
 export default function ProfileScreen() {
-  const { ready, gate } = useLoadedStore();
+  // identity, plus the counts it reports. No prices are shown here.
+  const { ready, gate } = useScreenData(['factories', 'periods', 'profile', 'teaItems']);
   const router = useRouter();
 
   // A whole-store subscription, then selectors as plain functions over it —

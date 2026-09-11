@@ -54,6 +54,56 @@ import type {
 
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 
+/**
+ * One independently loadable slice of the backend.
+ *
+ * The app used to fetch all of this before drawing anything, which meant
+ * opening Market paid for bulk sets, and opening any screen at all paid for
+ * every auction's item prices. Each tab now asks for what it actually reads.
+ *
+ * The three price resources are separate for the same reason: Market needs
+ * only what other factories fetched, Item Prices only what we did, and each
+ * fans out over every auction — so keeping them apart is worth three fetches
+ * per auction to the screens that need one of them.
+ */
+export type Resource =
+  | 'profile'
+  | 'teaItems'
+  | 'factories'
+  | 'periods'
+  | 'bulkSets'
+  | 'itemPrices'
+  | 'bulkResults'
+  | 'externalResults';
+
+export interface ResourceState {
+  status: LoadStatus;
+  error: string | null;
+}
+
+export const ALL_RESOURCES: readonly Resource[] = [
+  'profile',
+  'teaItems',
+  'factories',
+  'periods',
+  'bulkSets',
+  'itemPrices',
+  'bulkResults',
+  'externalResults',
+];
+
+/**
+ * What must be in the cache before a resource can be fetched.
+ *
+ * The price endpoints are per auction, so there is nothing to fan out over
+ * until the selling periods are known.
+ */
+const DEPENDS_ON: Partial<Record<Resource, readonly Resource[]>> = {
+  itemPrices: ['periods'],
+  bulkResults: ['periods'],
+  externalResults: ['periods'],
+};
+
 interface TeaStoreState {
   teaItems: TeaItem[];
   /** Our own factory. Null only before the first load resolves. */
@@ -66,16 +116,34 @@ interface TeaStoreState {
   bulkSets: BulkSet[];
   /** The date range every average on screen is drawn from. */
   range: DateRange;
+  /**
+   * Whether `range` has been decided yet — by the first sight of the auctions,
+   * or by the user. Without it a later resource load could widen a range the
+   * user had narrowed.
+   */
+  rangeInitialised: boolean;
 
-  /** Whether the cache has been filled from the API yet. */
-  status: LoadStatus;
-  /** Why the last load failed, in words worth showing someone. */
-  error: string | null;
+  /** How each slice of the cache is doing. Screens gate on the ones they read. */
+  resources: Record<Resource, ResourceState>;
   /** True while a save is in flight, so screens can disable their buttons. */
   saving: boolean;
 
-  /** Fill the cache from the API. Safe to call repeatedly. */
-  load: (options?: { force?: boolean }) => Promise<void>;
+  /**
+   * Fetch these resources.
+   *
+   * Safe to call repeatedly: one already in flight is joined rather than
+   * fetched twice.
+   *
+   *  · default      — skip anything already loaded. The first visit to a tab.
+   *  · revalidate   — fetch again, but keep the current data on screen while
+   *                   it is in the air. Every later visit to a tab, so the
+   *                   figures are current without the screen blanking.
+   *  · force        — fetch again and show the loading gate. The retry button.
+   */
+  ensure: (
+    needs: readonly Resource[],
+    options?: { force?: boolean; revalidate?: boolean },
+  ) => Promise<void>;
 
   setRange: (range: DateRange) => void;
   resetRange: () => void;
@@ -165,31 +233,17 @@ function describe(error: unknown): string {
 }
 
 /**
- * The price facts for every auction, in one pass.
+ * One price endpoint across every auction.
  *
- * The API exposes prices per selling period rather than in one bulk feed, so
- * this fans out. The requests are independent and there are only ever a handful
- * of auctions, so they go together rather than in sequence.
+ * The API exposes prices per selling period rather than in one feed, so this
+ * fans out. The requests are independent and auctions are few, so they go
+ * together rather than in sequence.
  */
-async function fetchPriceFacts(periods: SellingPeriod[]) {
-  const perPeriod = await Promise.all(
-    periods.map(async (period) => {
-      const [ourPrices, bulkResult, externalResults] = await Promise.all([
-        api.prices.ourPrices(period.id),
-        api.prices.ourBulkResult(period.id),
-        api.prices.externalResults(period.id),
-      ]);
-      return { ourPrices, bulkResult, externalResults };
-    }),
-  );
-
-  return {
-    ourItemPrices: perPeriod.flatMap((p) => p.ourPrices),
-    ourBulkResults: perPeriod
-      .map((p) => p.bulkResult)
-      .filter((r): r is OurBulkResult => r !== null),
-    externalFactoryResults: perPeriod.flatMap((p) => p.externalResults),
-  };
+async function fanOut<T>(
+  periods: readonly SellingPeriod[],
+  fetch: (sellingPeriodId: string) => Promise<T>,
+): Promise<T[]> {
+  return Promise.all(periods.map((period) => fetch(period.id)));
 }
 
 /**
@@ -204,6 +258,69 @@ async function fetchBulkSets(): Promise<BulkSetWithItems[]> {
   return Promise.all(headers.map((header) => api.bulkSets.get(header.id)));
 }
 
+/**
+ * How to fetch each resource, and what it puts in the cache.
+ *
+ * Each returns a patch rather than writing directly, so `ensure` owns every
+ * transition and a fetcher cannot forget to mark itself ready.
+ */
+type StorePatch = Partial<{
+  factoryProfile: FactoryProfile | null;
+  teaItems: TeaItem[];
+  externalFactories: ExternalFactory[];
+  sellingPeriods: SellingPeriod[];
+  bulkSets: BulkSetWithItems[];
+  ourItemPrices: OurItemPrice[];
+  ourBulkResults: OurBulkResult[];
+  externalFactoryResults: ExternalFactoryResult[];
+  range: DateRange;
+  rangeInitialised: boolean;
+}>;
+
+const FETCHERS: Record<Resource, (periods: readonly SellingPeriod[]) => Promise<StorePatch>> = {
+  profile: async () => ({ factoryProfile: await api.factoryProfile.get() }),
+
+  // Inactive grades come along: they must stay visible to manage, and every
+  // selector that should ignore them already filters on `active`.
+  teaItems: async () => ({ teaItems: await api.teaItems.list(true) }),
+
+  factories: async () => ({ externalFactories: await api.externalFactories.list(true) }),
+
+  periods: async () => ({ sellingPeriods: await api.sellingPeriods.list() }),
+
+  bulkSets: async () => ({ bulkSets: await fetchBulkSets() }),
+
+  itemPrices: async (periods) => ({
+    ourItemPrices: (await fanOut(periods, api.prices.ourPrices)).flat(),
+  }),
+
+  bulkResults: async (periods) => ({
+    ourBulkResults: (await fanOut(periods, api.prices.ourBulkResult)).filter(
+      (r): r is OurBulkResult => r !== null,
+    ),
+  }),
+
+  externalResults: async (periods) => ({
+    externalFactoryResults: (await fanOut(periods, api.prices.externalResults)).flat(),
+  }),
+};
+
+/**
+ * Fetches currently in the air, so two screens mounting at once — or one
+ * screen re-rendering mid-flight — join the same request instead of racing.
+ * Module-level rather than in the store: a promise is not state to render.
+ */
+const inFlight = new Map<Resource, Promise<void>>();
+
+const IDLE: ResourceState = { status: 'idle', error: null };
+
+function idleResources(): Record<Resource, ResourceState> {
+  return Object.fromEntries(ALL_RESOURCES.map((r) => [r, IDLE])) as Record<
+    Resource,
+    ResourceState
+  >;
+}
+
 export const useTeaStore = create<TeaStoreState>((set, get) => ({
   factoryProfile: null,
   teaItems: [],
@@ -215,54 +332,87 @@ export const useTeaStore = create<TeaStoreState>((set, get) => ({
   bulkSets: [],
   range: fullRange([]),
 
-  status: 'idle',
-  error: null,
+  resources: idleResources(),
+  rangeInitialised: false,
   saving: false,
 
-  load: async (options = {}) => {
-    const { status } = get();
-    if (!options.force && (status === 'loading' || status === 'ready')) return;
+  ensure: async (needs, options = {}) => {
+    const { force = false, revalidate = false } = options;
 
-    set({ status: 'loading', error: null });
+    const mark = (resource: Resource, next: ResourceState) =>
+      set((state) => ({ resources: { ...state.resources, [resource]: next } }));
 
-    try {
-      const [factoryProfile, teaItems, externalFactories, sellingPeriods, bulkSets] =
-        await Promise.all([
-          api.factoryProfile.get(),
-          // Inactive grades come along: they must stay visible to manage, and
-          // every selector that should ignore them already filters on `active`.
-          api.teaItems.list(true),
-          api.externalFactories.list(true),
-          api.sellingPeriods.list(),
-          fetchBulkSets(),
-        ]);
+    /**
+     * Fetch one resource. Never rejects: a failure is recorded against that
+     * resource and shown by the screens that asked for it, rather than
+     * becoming an unhandled rejection in whatever effect happened to call.
+     */
+    const loadOne = async (resource: Resource): Promise<boolean> => {
+      const already = get().resources[resource].status === 'ready';
+      if (already && !force && !revalidate) return true;
 
-      const facts = await fetchPriceFacts(sellingPeriods);
+      const existing = inFlight.get(resource);
+      if (existing) {
+        await existing;
+        return get().resources[resource].status === 'ready';
+      }
 
-      // Keep a range the user has already chosen; only widen to the full span
-      // on the first load, when there was nothing to choose from.
-      const previous = get();
-      const range =
-        previous.status === 'ready' ? previous.range : fullRange(sellingPeriods);
+      // Revalidating data we already hold must not blank the screen: the tab
+      // renders what it has while the request is in the air, and swaps in the
+      // answer when it lands. Only a first load and an explicit retry show the
+      // gate.
+      const quiet = already && revalidate && !force;
 
-      set({
-        factoryProfile,
-        teaItems,
-        externalFactories,
-        sellingPeriods,
-        bulkSets,
-        ...facts,
-        range,
-        status: 'ready',
-        error: null,
-      });
-    } catch (error) {
-      set({ status: 'error', error: describe(error) });
-    }
+      const run = (async () => {
+        if (!quiet) mark(resource, { status: 'loading', error: null });
+        try {
+          const patch = await FETCHERS[resource](get().sellingPeriods);
+          set((state) => ({
+            ...patch,
+            resources: { ...state.resources, [resource]: { status: 'ready', error: null } },
+          }));
+
+          // The first sight of the auctions decides the default range. Later
+          // loads must not: by then the user may have chosen one, and silently
+          // widening it would move every figure on screen.
+          if (resource === 'periods' && !get().rangeInitialised) {
+            set({ range: fullRange(get().sellingPeriods), rangeInitialised: true });
+          }
+        } catch (error) {
+          // A failed revalidation keeps the data we already had. Replacing a
+          // working screen with an error page because a background refresh
+          // missed would be worse than showing figures a minute old.
+          if (!quiet) mark(resource, { status: 'error', error: describe(error) });
+        } finally {
+          inFlight.delete(resource);
+        }
+      })();
+
+      inFlight.set(resource, run);
+      await run;
+      return get().resources[resource].status === 'ready';
+    };
+
+    // Pull in what the asked-for resources are built on, then load in two
+    // waves: everything independent together, then everything that needed it.
+    const wanted = new Set(needs);
+    for (const need of needs) for (const dep of DEPENDS_ON[need] ?? []) wanted.add(dep);
+
+    const independent = [...wanted].filter((r) => !DEPENDS_ON[r]);
+    const dependent = [...wanted].filter((r) => DEPENDS_ON[r]);
+
+    await Promise.all(independent.map(loadOne));
+
+    // A dependant whose dependency failed would fan out over an empty list and
+    // record itself ready with nothing in it — worse than staying unloaded.
+    const satisfied = dependent.filter((r) =>
+      (DEPENDS_ON[r] ?? []).every((dep) => get().resources[dep].status === 'ready'),
+    );
+    await Promise.all(satisfied.map(loadOne));
   },
 
-  setRange: (range) => set({ range }),
-  resetRange: () => set({ range: fullRange(get().sellingPeriods) }),
+  setRange: (range) => set({ range, rangeInitialised: true }),
+  resetRange: () => set({ range: fullRange(get().sellingPeriods), rangeInitialised: true }),
 
   recordOurPrices: async (sellingPeriodId, entries) => {
     set({ saving: true });

@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { Colors } from '@/constants/colors';
-import { useLoadedStore } from '@/components/data-state';
+import { useScreenData } from '@/components/data-state';
 import Header from '@/components/header';
 import TrendChart from '@/components/weekly-chart';
 import VerdictBadge from '@/components/verdict-badge';
@@ -37,7 +37,8 @@ import {
  */
 export default function DashboardScreen() {
   const router = useRouter();
-  const { ready, gate } = useLoadedStore();
+  // the whole picture: our prices, the market, and the set being prepared
+  const { ready, gate } = useScreenData(['bulkResults', 'bulkSets', 'externalResults', 'factories', 'itemPrices', 'periods', 'profile', 'teaItems']);
   const state = useTeaStore();
   const { range, factoryProfile: profile } = state;
 

@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
-import { useLoadedStore } from '@/components/data-state';
+import { useScreenData } from '@/components/data-state';
 import Header from '@/components/header';
 import { SearchField } from '@/components/picker-card';
 import { LeafIcon, PlusIcon } from '@/components/ui-icons';
@@ -28,7 +28,8 @@ import { periodsInRange, selectItemPriceBreakdown, useTeaStore } from '@/store/t
  * shortcut does not answer.
  */
 export default function ItemAveragesScreen() {
-  const { ready, gate } = useLoadedStore();
+  // our own per-grade prices only — no bulk sets, no other factories
+  const { ready, gate } = useScreenData(['itemPrices', 'periods', 'profile', 'teaItems']);
   const router = useRouter();
   const state = useTeaStore();
   const { sellingPeriods } = state;

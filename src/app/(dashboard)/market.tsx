@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api';
 import { Colors } from '@/constants/colors';
-import { useLoadedStore } from '@/components/data-state';
+import { useScreenData } from '@/components/data-state';
 import Header from '@/components/header';
 import { SearchField } from '@/components/picker-card';
 import { MoneyIcon, PlusIcon } from '@/components/ui-icons';
@@ -38,7 +38,8 @@ import {
  * market did last quarter should not re-base the planning forecast.
  */
 export default function MarketScreen() {
-  const { ready, gate } = useLoadedStore();
+  // other factories' figures only — our own prices are not on this screen
+  const { ready, gate } = useScreenData(['externalResults', 'factories', 'periods', 'profile']);
   const router = useRouter();
   const state = useTeaStore();
   const { sellingPeriods } = state;

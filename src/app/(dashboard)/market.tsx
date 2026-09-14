@@ -8,6 +8,7 @@ import { Colors } from '@/constants/colors';
 import { useScreenData } from '@/components/data-state';
 import Header from '@/components/header';
 import { SearchField } from '@/components/picker-card';
+import { DatePicker } from '@/components/ui/date-picker';
 import { MoneyIcon, PlusIcon } from '@/components/ui-icons';
 import { formatAuctionDate, formatPercent, formatRs } from '@/domain/averaging';
 import { auctionBounds, isIsoDate, rangePresets } from '@/domain/date-range';
@@ -273,27 +274,31 @@ export default function MarketScreen() {
 
           <View style={styles.dateRow}>
             <View style={styles.dateField}>
-              <Text style={styles.dateLabel}>FROM</Text>
-              <TextInput
-                style={styles.dateInput}
+              <DatePicker
+                label="FROM"
                 value={fromValue}
-                onChangeText={setFromDraft}
-                placeholder="2026-06-03"
-                placeholderTextColor={Colors.textSecondary}
-                autoCapitalize="none"
-                autoCorrect={false}
+                onChange={(date) => {
+                  setFromDraft(date);
+                  if (date && toValue && isIsoDate(date) && isIsoDate(toValue) && date <= toValue) {
+                    apply({ from: date, to: toValue });
+                  }
+                }}
+                placeholder={bounds.from}
+                maxDate={toValue || undefined}
               />
             </View>
             <View style={styles.dateField}>
-              <Text style={styles.dateLabel}>TO</Text>
-              <TextInput
-                style={styles.dateInput}
+              <DatePicker
+                label="TO"
                 value={toValue}
-                onChangeText={setToDraft}
-                placeholder="2026-09-16"
-                placeholderTextColor={Colors.textSecondary}
-                autoCapitalize="none"
-                autoCorrect={false}
+                onChange={(date) => {
+                  setToDraft(date);
+                  if (fromValue && date && isIsoDate(fromValue) && isIsoDate(date) && fromValue <= date) {
+                    apply({ from: fromValue, to: date });
+                  }
+                }}
+                placeholder={bounds.to}
+                minDate={fromValue || undefined}
               />
             </View>
             <Pressable style={styles.applyButton} onPress={applyTyped}>

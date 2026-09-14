@@ -12,6 +12,7 @@ import {
   SearchField,
   pickerStyles,
 } from '@/components/picker-card';
+import { DatePicker } from '@/components/ui/date-picker';
 import VerdictBadge from '@/components/verdict-badge';
 import { PlusIcon, LeafIcon } from '@/components/ui-icons';
 import {
@@ -22,7 +23,8 @@ import {
   formatRs,
   formatSignedRs,
 } from '@/domain/averaging';
-import type { BulkSetItem } from '@/domain/types';
+import { isIsoDate } from '@/domain/date-range';
+import type { BulkSetItem, DateRange } from '@/domain/types';
 import {
   selectActiveTeaItems,
   selectLatestPlannedBulkSet,
@@ -120,17 +122,51 @@ export default function BulkSetScreen() {
 
   // -------------------------------------------------------- choosing a set
   //
-  // As on Auction Results: one set on show, the rest behind a search. There is
-  // no date filter here, and that is deliberate — an auction IS a date, but a
-  // bulk set is a named plan. You look for BS-103, or for whatever is still a
-  // draft; nobody remembers the day a plan was typed. Its date is shown as
-  // context instead of offered as a filter.
+  // One set on show, the rest behind a search with status and date filters.
   const [picking, setPicking] = useState(false);
   const [setQuery, setSetQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'pending'>('all');
+  const [pickRange, setPickRange] = useState<DateRange | null>(null);
+  const [fromDraft, setFromDraft] = useState('');
+  const [toDraft, setToDraft] = useState('');
+  const [rangeError, setRangeError] = useState<string | null>(null);
+
+  const setDates = useMemo(() => editable.map((s) => s.createdAt.slice(0, 10)).sort(), [editable]);
+  const setBounds: DateRange = useMemo(
+    () =>
+      setDates.length > 0
+        ? { from: setDates[0]!, to: setDates.at(-1)! }
+        : { from: '1970-01-01', to: '9999-12-31' },
+    [setDates],
+  );
+
+  const appliedPick = pickRange ?? setBounds;
+  const fromValue = fromDraft || appliedPick.from;
+  const toValue = toDraft || appliedPick.to;
+
+  const applyPick = (next: DateRange) => {
+    setPickRange(next);
+    setFromDraft(next.from);
+    setToDraft(next.to);
+    setRangeError(null);
+  };
+
+  const applyTypedPick = () => {
+    if (!isIsoDate(fromValue) || !isIsoDate(toValue)) {
+      setRangeError('Dates must be written as YYYY-MM-DD, for example 2026-06-03.');
+      return;
+    }
+    if (fromValue > toValue) {
+      setRangeError('The start date must not be after the end date.');
+      return;
+    }
+    applyPick({ from: fromValue, to: toValue });
+  };
 
   const setNeedle = setQuery.trim().toLowerCase();
   const visibleSets = editable.filter((set) => {
+    const setDate = set.createdAt.slice(0, 10);
+    if (setDate < appliedPick.from || setDate > appliedPick.to) return false;
     if (statusFilter !== 'all' && set.status !== statusFilter) return false;
     if (setNeedle === '') return true;
     return `${set.reference} ${set.status} ${set.notes ?? ''}`.toLowerCase().includes(setNeedle);
@@ -258,6 +294,45 @@ export default function BulkSetScreen() {
             value={statusFilter}
             onChange={setStatusFilter}
           />
+
+          <View style={pickerStyles.dateRow}>
+            <View style={pickerStyles.dateField}>
+              <DatePicker
+                label="FROM"
+                value={fromValue}
+                onChange={(date) => {
+                  setFromDraft(date);
+                  if (date && toValue && isIsoDate(date) && isIsoDate(toValue) && date <= toValue) {
+                    applyPick({ from: date, to: toValue });
+                  }
+                }}
+                placeholder={setBounds.from}
+                maxDate={toValue || undefined}
+              />
+            </View>
+            <View style={pickerStyles.dateField}>
+              <DatePicker
+                label="TO"
+                value={toValue}
+                onChange={(date) => {
+                  setToDraft(date);
+                  if (fromValue && date && isIsoDate(fromValue) && isIsoDate(date) && fromValue <= date) {
+                    applyPick({ from: fromValue, to: date });
+                  }
+                }}
+                placeholder={setBounds.to}
+                minDate={fromValue || undefined}
+              />
+            </View>
+            <Pressable style={pickerStyles.applyButton} onPress={applyTypedPick}>
+              <Text style={pickerStyles.applyButtonText}>Apply</Text>
+            </Pressable>
+            <Pressable style={pickerStyles.outlineButton} onPress={() => applyPick(setBounds)}>
+              <Text style={pickerStyles.outlineButtonText}>Reset</Text>
+            </Pressable>
+          </View>
+
+          {rangeError && <Text style={pickerStyles.errorText}>{rangeError}</Text>}
 
           <Text style={pickerStyles.count}>
             {visibleSets.length} of {editable.length} set{editable.length === 1 ? '' : 's'} · sold

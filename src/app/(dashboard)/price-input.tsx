@@ -20,6 +20,7 @@ import {
   SearchField,
   pickerStyles,
 } from '@/components/picker-card';
+import { DatePicker } from '@/components/ui/date-picker';
 import VerdictBadge from '@/components/verdict-badge';
 import { LeafIcon, MoneyIcon, ChartIcon } from '@/components/ui-icons';
 import {
@@ -585,15 +586,11 @@ export default function AuctionResultsScreen() {
                     />
                   </View>
                   <View style={pickerStyles.addField}>
-                    <Text style={pickerStyles.fieldLabel}>DATE</Text>
-                    <TextInput
-                      style={pickerStyles.textInput}
+                    <DatePicker
+                      label="DATE"
                       value={newAuction.date}
-                      onChangeText={(date) => setNewAuction((a) => ({ ...a, date }))}
-                      placeholder="2026-10-07"
-                      placeholderTextColor={Colors.textSecondary}
-                      autoCapitalize="none"
-                      autoCorrect={false}
+                      onChange={(date) => setNewAuction((a) => ({ ...a, date }))}
+                      placeholder="YYYY-MM-DD"
                     />
                   </View>
                   <Pressable
@@ -633,27 +630,31 @@ export default function AuctionResultsScreen() {
 
           <View style={pickerStyles.dateRow}>
             <View style={pickerStyles.dateField}>
-              <Text style={pickerStyles.fieldLabel}>FROM</Text>
-              <TextInput
-                style={pickerStyles.textInput}
+              <DatePicker
+                label="FROM"
                 value={fromValue}
-                onChangeText={setFromDraft}
+                onChange={(date) => {
+                  setFromDraft(date);
+                  if (date && toValue && isIsoDate(date) && isIsoDate(toValue) && date <= toValue) {
+                    applyPick({ from: date, to: toValue });
+                  }
+                }}
                 placeholder={pickBounds.from}
-                placeholderTextColor={Colors.textSecondary}
-                autoCapitalize="none"
-                autoCorrect={false}
+                maxDate={toValue || undefined}
               />
             </View>
             <View style={pickerStyles.dateField}>
-              <Text style={pickerStyles.fieldLabel}>TO</Text>
-              <TextInput
-                style={pickerStyles.textInput}
+              <DatePicker
+                label="TO"
                 value={toValue}
-                onChangeText={setToDraft}
+                onChange={(date) => {
+                  setToDraft(date);
+                  if (fromValue && date && isIsoDate(fromValue) && isIsoDate(date) && fromValue <= date) {
+                    applyPick({ from: fromValue, to: date });
+                  }
+                }}
                 placeholder={pickBounds.to}
-                placeholderTextColor={Colors.textSecondary}
-                autoCapitalize="none"
-                autoCorrect={false}
+                minDate={fromValue || undefined}
               />
             </View>
             <Pressable style={pickerStyles.applyButton} onPress={applyTypedPick}>

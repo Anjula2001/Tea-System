@@ -168,3 +168,56 @@ export const SettingsIcon = ({ color = '#1F2937', size = 24 }: IconProps) => (
     />
   </Svg>
 );
+
+export const CalendarIcon = ({ color = '#6B7280', size = 18 }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Rect
+      x="3"
+      y="4"
+      width="18"
+      height="18"
+      rx="2"
+      stroke={color}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <Path d="M16 2V6M8 2V6M3 10H21" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </Svg>
+);
+
+export const ChevronLeftIcon = ({ color = '#6B7280', size = 18 }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="M15 19L8 12L15 5"
+      stroke={color}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+export const CheckIcon = ({ color = '#2E7D32', size = 18 }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="M20 6L9 17L4 12"
+      stroke={color}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+export const XIcon = ({ color = '#6B7280', size = 18 }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="M18 6L6 18M6 6L18 18"
+      stroke={color}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);

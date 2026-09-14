@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ScrollView,
@@ -69,6 +70,7 @@ import {
  * per grade. Re-saving a value records a correction rather than an error.
  */
 export default function AuctionResultsScreen() {
+  const router = useRouter();
   // records all three kinds of price, and values the set being sold
   const { ready, gate } = useScreenData(['bulkResults', 'bulkSets', 'externalResults', 'factories', 'itemPrices', 'periods', 'profile', 'teaItems']);
   const { width } = useWindowDimensions();
@@ -473,15 +475,20 @@ export default function AuctionResultsScreen() {
 
     return (
       <View key={item.id} style={styles.inputCell}>
-        <View style={styles.inputLabelRow}>
-          <Text style={styles.inputCode}>{item.code}</Text>
-          {quantityInSet.has(item.id) && (
-            <Text style={styles.setTag}>{formatKg(quantityInSet.get(item.id)!)} kg in set</Text>
-          )}
-          {missing && <Text style={styles.neededTag}>needed</Text>}
-          {savedItemPrices.has(item.id) && <Text style={styles.savedTag}>on record</Text>}
-        </View>
-        <Text style={styles.inputName}>{item.name}</Text>
+        <Pressable
+          onPress={() => router.push({ pathname: '/tea-item', params: { id: item.id } })}
+          style={({ pressed }) => [styles.itemHeaderPressable, pressed && { opacity: 0.7 }]}>
+          <View style={styles.inputLabelRow}>
+            <Text style={styles.inputCode}>{item.code}</Text>
+            {quantityInSet.has(item.id) && (
+              <Text style={styles.setTag}>{formatKg(quantityInSet.get(item.id)!)} kg in set</Text>
+            )}
+            {missing && <Text style={styles.neededTag}>needed</Text>}
+            {savedItemPrices.has(item.id) && <Text style={styles.savedTag}>on record</Text>}
+            <Text style={styles.itemLinkArrow}>›</Text>
+          </View>
+          <Text style={styles.inputName}>{item.name}</Text>
+        </Pressable>
 
         <View style={[styles.inputWrap, missing && styles.inputWrapMissing]}>
           <Text style={styles.inputPrefix}>Rs.</Text>
@@ -911,10 +918,16 @@ export default function AuctionResultsScreen() {
 
                   return (
                     <View key={line.teaItemId} style={styles.blendTableRow}>
-                      <View style={styles.blendColItem}>
-                        <Text style={styles.blendTdBold}>{line.teaItemCode}</Text>
+                      <Pressable
+                        style={({ pressed }) => [styles.blendColItem, pressed && { opacity: 0.7 }]}
+                        onPress={() =>
+                          router.push({ pathname: '/tea-item', params: { id: line.teaItemId } })
+                        }>
+                        <Text style={styles.blendTdBold}>
+                          {line.teaItemCode} <Text style={{ color: Colors.primary, fontSize: 11 }}>›</Text>
+                        </Text>
                         <Text style={styles.blendTdMuted}>{line.teaItemName}</Text>
-                      </View>
+                      </Pressable>
                       <Text style={[styles.blendTdText, styles.blendColNum]}>
                         {formatKg(line.quantityKg)} kg
                       </Text>
@@ -1041,14 +1054,24 @@ export default function AuctionResultsScreen() {
                     const entered = enteredExternal.get(factory.id) ?? null;
                     return (
                       <View key={factory.id} style={styles.inputCell}>
-                        <View style={styles.inputLabelRow}>
-                          <Text style={styles.inputCode}>{factory.code}</Text>
-                          {onRecord !== null && <Text style={styles.savedTag}>on record</Text>}
-                        </View>
-                        <Text style={styles.inputName} numberOfLines={1}>
-                          {factory.name}
-                          {factory.region ? ` · ${factory.region}` : ''}
-                        </Text>
+                        <Pressable
+                          onPress={() =>
+                            router.push({ pathname: '/factory', params: { id: factory.id } })
+                          }
+                          style={({ pressed }) => [
+                            styles.itemHeaderPressable,
+                            pressed && { opacity: 0.7 },
+                          ]}>
+                          <View style={styles.inputLabelRow}>
+                            <Text style={styles.inputCode}>{factory.code}</Text>
+                            {onRecord !== null && <Text style={styles.savedTag}>on record</Text>}
+                            <Text style={styles.itemLinkArrow}>›</Text>
+                          </View>
+                          <Text style={styles.inputName} numberOfLines={1}>
+                            {factory.name}
+                            {factory.region ? ` · ${factory.region}` : ''}
+                          </Text>
+                        </Pressable>
 
                         <View style={styles.inputWrap}>
                           <Text style={styles.inputPrefix}>Rs.</Text>
@@ -1406,6 +1429,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical: 1,
     overflow: 'hidden',
+  },
+  itemHeaderPressable: {
+    paddingBottom: 4,
+  },
+  itemLinkArrow: {
+    marginLeft: 'auto',
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.primary,
   },
   inputName: { fontSize: 11, color: Colors.textSecondary },
 

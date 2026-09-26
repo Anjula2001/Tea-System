@@ -22,6 +22,9 @@ import {
   useTeaStore,
 } from '@/store/tea-store';
 
+const FACTORY_TABLE_MIN_WIDTH = 680;
+const PERIOD_TABLE_MIN_WIDTH = 620;
+
 /**
  * The market side of the ledger: what other factories fetched, and the
  * benchmark our own bulk price is measured against.
@@ -405,13 +408,14 @@ export default function MarketScreen() {
           </Text>
 
           {visibleFactories.length > 0 ? (
-            <View style={styles.table}>
+            <ScrollableTable minWidth={FACTORY_TABLE_MIN_WIDTH}>
               <View style={styles.tableHeader}>
-                <Text style={[styles.th, styles.colItem]}>Factory</Text>
-                <Text style={[styles.th, styles.colNum]}>Auctions</Text>
-                <Text style={[styles.th, styles.colNum]}>Low</Text>
-                <Text style={[styles.th, styles.colNum]}>High</Text>
-                <Text style={[styles.th, styles.colNum]}>Average</Text>
+                <Text style={[styles.th, styles.colItem]} numberOfLines={1}>Factory</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Auctions</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Low</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>High</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Average</Text>
+                <Text style={styles.colChevron} accessibilityLabel="Open factory" />
               </View>
 
               {visibleFactories.map((row) => (
@@ -446,10 +450,10 @@ export default function MarketScreen() {
                   <Text style={[styles.tdBold, styles.colNum, styles.average]}>
                     {formatRs(row.averagePricePerKg)}
                   </Text>
-                  <Text style={styles.chevron}>›</Text>
+                  <Text style={styles.colChevron}>›</Text>
                 </Pressable>
               ))}
-            </View>
+            </ScrollableTable>
           ) : (
             <View style={styles.emptyBlock}>
               <Text style={styles.emptyNote}>
@@ -483,11 +487,11 @@ export default function MarketScreen() {
             The sum over the count, one auction at a time — the benchmark at its most literal.
           </Text>
 
-          <View style={styles.table}>
+          <ScrollableTable minWidth={PERIOD_TABLE_MIN_WIDTH}>
             <View style={styles.tableHeader}>
-              <Text style={[styles.th, styles.colItem]}>Auction</Text>
-              <Text style={[styles.th, styles.colItem]}>Factories reporting</Text>
-              <Text style={[styles.th, styles.colNum]}>Average</Text>
+              <Text style={[styles.th, styles.colItem]} numberOfLines={1}>Auction</Text>
+              <Text style={[styles.th, styles.colReporting]} numberOfLines={1}>Factories reporting</Text>
+              <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Average</Text>
             </View>
             {perPeriod.map((period) => (
               <View key={period.sellingPeriodId} style={styles.tableRow}>
@@ -495,7 +499,7 @@ export default function MarketScreen() {
                   <Text style={styles.tdBold}>{period.label}</Text>
                   <Text style={styles.tdMuted}>{formatAuctionDate(period.auctionDate)}</Text>
                 </View>
-                <Text style={[styles.tdText, styles.colItem]}>
+                <Text style={[styles.tdText, styles.colReporting]} numberOfLines={1}>
                   {period.factoriesCounted === 0
                     ? 'none reported'
                     : period.prices
@@ -507,7 +511,7 @@ export default function MarketScreen() {
                 </Text>
               </View>
             ))}
-          </View>
+          </ScrollableTable>
         </View>
 
         {/* Recording */}
@@ -600,6 +604,23 @@ function parsePrice(raw: string): number | null {
   const value = Number(trimmed);
   if (!Number.isFinite(value) || value <= 0) return null;
   return Math.round(value * 100) / 100;
+}
+
+function ScrollableTable({
+  minWidth,
+  children,
+}: {
+  minWidth: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator
+      contentContainerStyle={styles.tableScrollContent}>
+      <View style={[styles.table, styles.tableWide, { minWidth }]}>{children}</View>
+    </ScrollView>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -727,6 +748,8 @@ const styles = StyleSheet.create({
   addFieldWide: { flexBasis: 200 },
 
   table: { borderRadius: 8, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
+  tableScrollContent: { flexGrow: 1 },
+  tableWide: { flexGrow: 1 },
   tableHeader: {
     flexDirection: 'row',
     backgroundColor: '#F8FAFC',
@@ -746,8 +769,9 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
     gap: 8,
   },
-  colItem: { flex: 2.2 },
-  colNum: { flex: 1.1, textAlign: 'right' },
+  colItem: { flex: 2.2, minWidth: 190 },
+  colReporting: { flex: 2.2, minWidth: 190 },
+  colNum: { flex: 1.1, minWidth: 84, textAlign: 'right' },
   tdBold: { fontSize: 13, fontWeight: '600', color: Colors.text },
   tdText: { fontSize: 12, color: Colors.textSecondary },
   tdMuted: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },
@@ -763,7 +787,7 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
     overflow: 'hidden',
   },
-  chevron: { fontSize: 20, color: Colors.textSecondary, marginLeft: 2, width: 12, textAlign: 'right' },
+  colChevron: { width: 20, flexShrink: 0, fontSize: 20, color: Colors.textSecondary, marginLeft: 2, textAlign: 'right' },
 
   searchRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   filterRow: { flexDirection: 'row', gap: 6 },

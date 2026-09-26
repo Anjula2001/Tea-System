@@ -15,6 +15,8 @@ import { auctionBounds, isIsoDate, rangePresets } from '@/domain/date-range';
 import type { DateRange } from '@/domain/types';
 import { periodsInRange, selectItemPriceBreakdown, useTeaStore } from '@/store/tea-store';
 
+const ITEM_PRICES_TABLE_MIN_WIDTH = 680;
+
 /**
  * What has 1 kg of each grade been worth, over any stretch of time you choose.
  *
@@ -350,13 +352,14 @@ export default function ItemAveragesScreen() {
           </Text>
 
           {visible.length > 0 && (
-            <View style={styles.table}>
+            <ScrollableTable minWidth={ITEM_PRICES_TABLE_MIN_WIDTH}>
               <View style={styles.tableHeader}>
-                <Text style={[styles.th, styles.colItem]}>Tea Item</Text>
-                <Text style={[styles.th, styles.colNum]}>Auctions</Text>
-                <Text style={[styles.th, styles.colNum]}>Low</Text>
-                <Text style={[styles.th, styles.colNum]}>High</Text>
-                <Text style={[styles.th, styles.colNum]}>Average</Text>
+                <Text style={[styles.th, styles.colItem]} numberOfLines={1}>Tea Item</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Auctions</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Low</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>High</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Average</Text>
+                <Text style={styles.colChevron} accessibilityLabel="Open item" />
               </View>
 
               {visible.map((row) => {
@@ -391,13 +394,12 @@ export default function ItemAveragesScreen() {
                       <Text style={[styles.tdBold, styles.colNum, styles.average]}>
                         {formatRs(row.averagePricePerKg)}
                       </Text>
-                      <Text style={styles.chevron}>›</Text>
+                      <Text style={styles.colChevron}>›</Text>
                     </Pressable>
-
-                </View>
+                  </View>
               );
             })}
-          </View>
+            </ScrollableTable>
           )}
 
           {visible.length === 0 && (
@@ -438,6 +440,23 @@ export default function ItemAveragesScreen() {
         </Text>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function ScrollableTable({
+  minWidth,
+  children,
+}: {
+  minWidth: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator
+      contentContainerStyle={styles.tableScrollContent}>
+      <View style={[styles.table, styles.tableWide, { minWidth }]}>{children}</View>
+    </ScrollView>
   );
 }
 
@@ -585,6 +604,8 @@ const styles = StyleSheet.create({
   periodList: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
 
   table: { borderRadius: 8, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
+  tableScrollContent: { flexGrow: 1 },
+  tableWide: { flexGrow: 1 },
   tableHeader: {
     flexDirection: 'row',
     backgroundColor: '#F8FAFC',
@@ -604,15 +625,15 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
     gap: 8,
   },
-  colItem: { flex: 2.2 },
-  colNum: { flex: 1.1, textAlign: 'right' },
+  colItem: { flex: 2.2, minWidth: 210 },
+  colNum: { flex: 1.1, minWidth: 84, textAlign: 'right' },
   tdBold: { fontSize: 13, fontWeight: '600', color: Colors.text },
   tdText: { fontSize: 13, color: Colors.textSecondary },
   tdMuted: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },
   average: { fontSize: 14, color: Colors.primary },
 
 
-  chevron: { fontSize: 20, color: Colors.textSecondary, marginLeft: 2, width: 12, textAlign: 'right' },
+  colChevron: { width: 20, flexShrink: 0, fontSize: 20, color: Colors.textSecondary, marginLeft: 2, textAlign: 'right' },
   emptyNote: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18 },
   footNote: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center', lineHeight: 16 },
 });

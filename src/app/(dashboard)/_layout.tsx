@@ -1,6 +1,14 @@
 import { Tabs } from 'expo-router';
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, useWindowDimensions, Platform } from 'react-native';
+import {
+  ScrollView,
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  useWindowDimensions,
+  Platform,
+} from 'react-native';
 import { Colors } from '@/constants/colors';
 import { HomeIcon, MoneyIcon, PlusIcon, ChartIcon, LeafIcon, WalletIcon } from '@/components/ui-icons';
 import type { FactoryProfile } from '@/domain/types';
@@ -85,7 +93,10 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
 
       {isDesktop && <Text style={styles.sectionLabel}>MAIN MENU</Text>}
 
-      <View style={[styles.navItemsGroup, isDesktop ? styles.desktopNavGroup : styles.mobileNavGroup]}>
+      <ScrollView
+        horizontal={false}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={isDesktop ? styles.desktopNavGroup : styles.mobileNavGroup}>
         {tabRoutes.map((tab) => {
           const routeObj = state.routes.find((r: { name: string }) => r.name === tab.name);
           const routeIndex = state.routes.findIndex((r: { name: string }) => r.name === tab.name);
@@ -121,13 +132,19 @@ function CustomTabBar({ state, navigation }: CustomTabBarProps) {
                 pressed && { opacity: 0.8 },
               ]}>
               <IconComponent color={iconColor} size={isDesktop ? 18 : 20} />
-              <Text style={[styles.navItemText, isFocused && styles.navItemTextActive]}>
+              <Text
+                style={[
+                  styles.navItemText,
+                  !isDesktop && styles.mobileNavItemText,
+                  isFocused && styles.navItemTextActive,
+                ]}
+                numberOfLines={2}>
                 {tab.label}
               </Text>
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
 
       {/* Factory Footer Card on Desktop Sidebar */}
       {isDesktop && (
@@ -200,8 +217,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     borderTopWidth: 1,
     paddingVertical: 8,
-    paddingHorizontal: 12,
-    justifyContent: 'space-around',
+    paddingHorizontal: 0,
     alignItems: 'center',
   },
   brandContainer: {
@@ -245,8 +261,8 @@ const styles = StyleSheet.create({
   },
   mobileNavGroup: {
     flexDirection: 'row',
+    width: '100%',
     justifyContent: 'space-around',
-    flex: 1,
   },
   navItem: {
     alignItems: 'center',
@@ -260,8 +276,12 @@ const styles = StyleSheet.create({
   },
   mobileNavItem: {
     flexDirection: 'column',
+    flex: 1,
+    minWidth: 0,
+    minHeight: 58,
+    justifyContent: 'center',
     paddingVertical: 6,
-    paddingHorizontal: 8,
+    paddingHorizontal: 2,
     gap: 4,
   },
   navItemActive: {
@@ -271,7 +291,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: Colors.textSecondary,
+    textAlign: 'center',
   },
+  mobileNavItemText: { fontSize: 10, lineHeight: 12 },
   navItemTextActive: {
     fontWeight: '600',
     color: Colors.primary,

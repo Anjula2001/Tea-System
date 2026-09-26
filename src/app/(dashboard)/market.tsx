@@ -530,13 +530,16 @@ export default function MarketScreen() {
             </View>
           </View>
 
-          <View style={styles.pillRow}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.auctionPillRow}>
             {orderedPeriods.map((p) => {
               const active = p.id === entryPeriodId;
               return (
                 <Pressable
                   key={p.id}
-                  style={[styles.pill, active && styles.pillActive]}
+                  style={[styles.pill, styles.auctionPill, active && styles.pillActive]}
                   onPress={() => {
                     setEntryPeriodId(p.id);
                     setDrafts({});
@@ -546,7 +549,7 @@ export default function MarketScreen() {
                 </Pressable>
               );
             })}
-          </View>
+          </ScrollView>
 
           <View style={styles.inputGrid}>
             {externalFactories.map((factory) => (
@@ -677,6 +680,7 @@ const styles = StyleSheet.create({
   sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2, lineHeight: 17 },
 
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  auctionPillRow: { flexDirection: 'row', gap: 8 },
   pill: {
     backgroundColor: Colors.background,
     borderWidth: 1,
@@ -685,6 +689,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
+  auctionPill: { minWidth: 126 },
   pillActive: { backgroundColor: Colors.primaryLight, borderColor: Colors.primary },
   pillText: { fontSize: 13, fontWeight: '600', color: Colors.text },
   pillTextActive: { color: Colors.primary },

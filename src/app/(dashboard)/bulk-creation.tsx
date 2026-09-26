@@ -1,5 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
+import {
+  ScrollView,
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  Pressable,
+  useWindowDimensions,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api';
@@ -61,6 +69,8 @@ import {
  */
 export default function BulkSetScreen() {
   // values a set at our item averages, against the market benchmark
+  const { width } = useWindowDimensions();
+  const compactLayout = width < 520;
   const { ready, gate } = useScreenData(['bulkSets', 'externalResults', 'factories', 'itemPrices', 'periods', 'profile', 'teaItems']);
   const state = useTeaStore();
   const { bulkSets, sellingPeriods, range } = state;
@@ -388,55 +398,63 @@ export default function BulkSetScreen() {
         )}
 
         {/* Headline valuation */}
-        <View style={styles.summaryCard}>
-          <View style={styles.summaryBlock}>
+        <View style={[styles.summaryCard, compactLayout && styles.summaryCardCompact]}>
+          <View style={[styles.summaryBlock, compactLayout && styles.summaryBlockCompact]}>
             <Text style={styles.summaryLabel}>TOTAL QUANTITY</Text>
-            <Text style={styles.summaryValue}>{formatKg(valuation.totalQuantityKg)} kg</Text>
-            <Text style={styles.summaryMeta}>
-              {draftItems.length} tea item{draftItems.length === 1 ? '' : 's'}
-            </Text>
+            <View style={styles.summaryValueGroup}>
+              <Text style={styles.summaryValue}>{formatKg(valuation.totalQuantityKg)} kg</Text>
+              <Text style={styles.summaryMeta}>
+                {draftItems.length} tea item{draftItems.length === 1 ? '' : 's'}
+              </Text>
+            </View>
           </View>
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryBlock}>
+          <View style={[styles.summaryDivider, compactLayout && styles.summaryDividerCompact]} />
+          <View style={[styles.summaryBlock, compactLayout && styles.summaryBlockCompact]}>
             <Text style={styles.summaryLabel}>PLANNED AVG PER KG</Text>
-            <Text style={styles.summaryValue}>
-              Rs. {formatRs(valuation.expectedPricePerKg)}
-            </Text>
-            {/* The working, not just the answer — it moves with every keystroke,
-                so showing the division makes clear what the number is made of. */}
-            <Text style={styles.summaryMeta}>
-              {valuation.totalValue === null
-                ? 'Enter quantities to value the set'
-                : `Rs. ${formatRs(valuation.totalValue, 0)} ÷ ${formatKg(valuation.pricedQuantityKg)} kg`}
-            </Text>
-            <Text style={styles.summaryMeta}>at historical averages</Text>
+            <View style={styles.summaryValueGroup}>
+              <Text style={styles.summaryValue}>
+                Rs. {formatRs(valuation.expectedPricePerKg)}
+              </Text>
+              {/* The working, not just the answer — it moves with every keystroke,
+                  so showing the division makes clear what the number is made of. */}
+              <Text style={styles.summaryMeta}>
+                {valuation.totalValue === null
+                  ? 'Enter quantities to value the set'
+                  : `Rs. ${formatRs(valuation.totalValue, 0)} ÷ ${formatKg(valuation.pricedQuantityKg)} kg`}
+              </Text>
+              <Text style={styles.summaryMeta}>at historical averages</Text>
+            </View>
           </View>
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryBlock}>
+          <View style={[styles.summaryDivider, compactLayout && styles.summaryDividerCompact]} />
+          <View style={[styles.summaryBlock, compactLayout && styles.summaryBlockCompact]}>
             <Text style={styles.summaryLabel}>MARKET AVERAGE</Text>
-            <Text style={[styles.summaryValue, { color: '#B8860B' }]}>
-              Rs. {formatRs(market.averagePricePerKg)}
-            </Text>
-            <Text style={styles.summaryMeta}>{market.factoriesCounted} other factories</Text>
+            <View style={styles.summaryValueGroup}>
+              <Text style={[styles.summaryValue, { color: '#B8860B' }]}> 
+                Rs. {formatRs(market.averagePricePerKg)}
+              </Text>
+              <Text style={styles.summaryMeta}>{market.factoriesCounted} other factories</Text>
+            </View>
           </View>
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryBlock}>
+          <View style={[styles.summaryDivider, compactLayout && styles.summaryDividerCompact]} />
+          <View style={[styles.summaryBlock, compactLayout && styles.summaryBlockCompact]}>
             <Text style={styles.summaryLabel}>DIFFERENCE</Text>
-            <Text
-              style={[
-                styles.summaryValue,
-                {
-                  color:
-                    verdict.verdict === 'below'
-                      ? Colors.below
-                      : verdict.verdict === 'unknown'
-                        ? Colors.textSecondary
-                        : Colors.above,
-                },
-              ]}>
-              {formatSignedRs(verdict.differencePerKg)}
-            </Text>
-            <VerdictBadge verdict={verdict.verdict} percent={verdict.differencePercent} compact />
+            <View style={styles.summaryResult}>
+              <Text
+                style={[
+                  styles.summaryValue,
+                  {
+                    color:
+                      verdict.verdict === 'below'
+                        ? Colors.below
+                        : verdict.verdict === 'unknown'
+                          ? Colors.textSecondary
+                          : Colors.above,
+                  },
+                ]}>
+                {formatSignedRs(verdict.differencePerKg)}
+              </Text>
+              <VerdictBadge verdict={verdict.verdict} percent={verdict.differencePercent} compact />
+            </View>
           </View>
         </View>
 
@@ -721,11 +739,23 @@ const styles = StyleSheet.create({
     padding: 18,
     gap: 14,
   },
+  summaryCardCompact: { flexDirection: 'column', gap: 0 },
   summaryBlock: { flex: 1, minWidth: 150, gap: 3 },
+  summaryBlockCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minWidth: 0,
+    paddingVertical: 11,
+    gap: 12,
+  },
   summaryDivider: { width: 1, backgroundColor: Colors.border },
+  summaryDividerCompact: { width: '100%', height: 1 },
   summaryLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.6 },
   summaryValue: { fontSize: 20, fontWeight: '700', color: Colors.text },
   summaryMeta: { fontSize: 11, color: Colors.textSecondary },
+  summaryValueGroup: { gap: 3 },
+  summaryResult: { alignItems: 'flex-end', gap: 3, flexShrink: 0 },
 
   warningRow: {
     backgroundColor: Colors.accentLight,

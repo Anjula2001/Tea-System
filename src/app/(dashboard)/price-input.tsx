@@ -74,6 +74,7 @@ export default function AuctionResultsScreen() {
   // records all three kinds of price, and values the set being sold
   const { ready, gate } = useScreenData(['bulkResults', 'bulkSets', 'externalResults', 'factories', 'itemPrices', 'periods', 'profile', 'teaItems']);
   const { width } = useWindowDimensions();
+  const compactLayout = width < 520;
   const state = useTeaStore();
   const { sellingPeriods } = state;
   // Retired factories stay in the cache to be managed on Market, but they no
@@ -474,11 +475,11 @@ export default function AuctionResultsScreen() {
     const missing = required && enteredPricePerKg === null;
 
     return (
-      <View key={item.id} style={styles.inputCell}>
+      <View key={item.id} style={[styles.inputCell, compactLayout && styles.inputCellCompact]}>
         <Pressable
           onPress={() => router.push({ pathname: '/tea-item', params: { id: item.id } })}
           style={({ pressed }) => [styles.itemHeaderPressable, pressed && { opacity: 0.7 }]}>
-          <View style={styles.inputLabelRow}>
+          <View style={[styles.inputLabelRow, compactLayout && styles.inputLabelRowCompact]}>
             <Text style={styles.inputCode}>{item.code}</Text>
             {quantityInSet.has(item.id) && (
               <Text style={styles.setTag}>{formatKg(quantityInSet.get(item.id)!)} kg in set</Text>
@@ -731,7 +732,7 @@ export default function AuctionResultsScreen() {
         )}
 
         {/* 1 — our per-item prices */}
-        <View style={styles.sectionCard}>
+        <View style={[styles.sectionCard, compactLayout && styles.sectionCardCompact]}>
           <SectionHeading
             icon={<LeafIcon color={Colors.primary} size={18} />}
             tint={Colors.primaryLight}
@@ -1111,38 +1112,40 @@ export default function AuctionResultsScreen() {
         </View>
 
         {/* Live comparison for this auction */}
-        <View style={styles.previewCard}>
-          <View style={styles.previewBlock}>
+        <View style={[styles.previewCard, compactLayout && styles.previewCardCompact]}>
+          <View style={[styles.previewBlock, compactLayout && styles.previewBlockCompact]}>
             <Text style={styles.previewLabel}>OUR BULK</Text>
             <Text style={styles.previewValue}>Rs. {formatRs(preview.ours)}</Text>
           </View>
-          <View style={styles.previewDivider} />
-          <View style={styles.previewBlock}>
-            <Text style={styles.previewLabel}>
+          <View style={[styles.previewDivider, compactLayout && styles.previewDividerCompact]} />
+          <View style={[styles.previewBlock, compactLayout && styles.previewBlockCompact]}>
+            <Text style={styles.previewLabel} numberOfLines={1}>
               MARKET · {preview.market.factoriesCounted} FACTORIES
             </Text>
             <Text style={[styles.previewValue, { color: '#B8860B' }]}>
               Rs. {formatRs(preview.market.averagePricePerKg)}
             </Text>
           </View>
-          <View style={styles.previewDivider} />
-          <View style={styles.previewBlock}>
+          <View style={[styles.previewDivider, compactLayout && styles.previewDividerCompact]} />
+          <View style={[styles.previewBlock, compactLayout && styles.previewBlockCompact]}>
             <Text style={styles.previewLabel}>DIFFERENCE</Text>
-            <Text
-              style={[
-                styles.previewValue,
-                {
-                  color:
-                    preview.verdict === 'below'
-                      ? Colors.below
-                      : preview.verdict === 'unknown'
-                        ? Colors.textSecondary
-                        : Colors.above,
-                },
-              ]}>
-              {formatSignedRs(preview.differencePerKg)}
-            </Text>
-            <VerdictBadge verdict={preview.verdict} percent={preview.differencePercent} compact />
+            <View style={styles.previewResult}>
+              <Text
+                style={[
+                  styles.previewValue,
+                  {
+                    color:
+                      preview.verdict === 'below'
+                        ? Colors.below
+                        : preview.verdict === 'unknown'
+                          ? Colors.textSecondary
+                          : Colors.above,
+                  },
+                ]}>
+                {formatSignedRs(preview.differencePerKg)}
+              </Text>
+              <VerdictBadge verdict={preview.verdict} percent={preview.differencePercent} compact />
+            </View>
           </View>
         </View>
 
@@ -1383,6 +1386,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     gap: 16,
   },
+  sectionCardCompact: { padding: 14 },
   headingRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   headingIcon: { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   headingText: { flex: 1 },
@@ -1393,7 +1397,9 @@ const styles = StyleSheet.create({
   // flexBasis + maxWidth rather than flex:1 — otherwise a short final row
   // stretches two cells across the whole card and the columns stop lining up.
   inputCell: { flexGrow: 1, flexBasis: 210, minWidth: 190, maxWidth: 300, gap: 4 },
+  inputCellCompact: { flexBasis: '100%', minWidth: 0, maxWidth: '100%' },
   inputLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  inputLabelRowCompact: { flexWrap: 'wrap', rowGap: 6 },
   inputCode: { fontSize: 13, fontWeight: '700', color: Colors.text },
   savedTag: { fontSize: 10, fontWeight: '600', color: Colors.primary },
   neededTag: {
@@ -1608,10 +1614,21 @@ const styles = StyleSheet.create({
     padding: 18,
     gap: 14,
   },
+  previewCardCompact: { flexDirection: 'column', gap: 0 },
   previewBlock: { flex: 1, minWidth: 150, gap: 4 },
+  previewBlockCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minWidth: 0,
+    paddingVertical: 11,
+    gap: 12,
+  },
   previewDivider: { width: 1, backgroundColor: Colors.border },
+  previewDividerCompact: { width: '100%', height: 1 },
   previewLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.6 },
   previewValue: { fontSize: 20, fontWeight: '700', color: Colors.text },
+  previewResult: { alignItems: 'flex-end', gap: 3, flexShrink: 0 },
 
   saveButton: {
     backgroundColor: Colors.primary,

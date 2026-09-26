@@ -44,6 +44,9 @@ import {
   valueBulkSetItems,
 } from '@/store/tea-store';
 
+const ITEMS_TABLE_MIN_WIDTH = 760;
+const SOLD_SETS_TABLE_MIN_WIDTH = 640;
+
 /**
  * Planning the next bulk set. Half of a two-step story.
  *
@@ -496,13 +499,13 @@ export default function BulkSetScreen() {
             />
           </View>
 
-          <View style={styles.table}>
+          <ScrollableTable minWidth={ITEMS_TABLE_MIN_WIDTH}>
             <View style={styles.tableHeader}>
-              <Text style={[styles.th, styles.colItem]}>Tea Item</Text>
-              <Text style={[styles.th, styles.colQty]}>Quantity (kg)</Text>
-              <Text style={[styles.th, styles.colNum]}>Our Avg (Rs/kg)</Text>
-              <Text style={[styles.th, styles.colNum]}>Line Value</Text>
-              <Text style={[styles.th, styles.colNum]}>Share</Text>
+              <Text style={[styles.th, styles.colItem]} numberOfLines={1}>Tea Item</Text>
+              <Text style={[styles.th, styles.colQty]} numberOfLines={1}>Quantity (kg)</Text>
+              <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Our Avg (Rs/kg)</Text>
+              <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Line Value</Text>
+              <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Share</Text>
             </View>
 
             {teaItems.map((item) => {
@@ -570,7 +573,7 @@ export default function BulkSetScreen() {
                 {valuation.totalValue === null ? '—' : formatPercent(1)}
               </Text>
             </View>
-          </View>
+          </ScrollableTable>
         </View>
 
         <View style={styles.planNote}>
@@ -604,13 +607,13 @@ export default function BulkSetScreen() {
               How earlier plans turned out. Each set is valued twice at the same kilos — at the
               averages known before its auction, then at what its grades actually fetched there.
             </Text>
-            <View style={styles.table}>
+            <ScrollableTable minWidth={SOLD_SETS_TABLE_MIN_WIDTH}>
               <View style={styles.tableHeader}>
-                <Text style={[styles.th, styles.colItem]}>Reference</Text>
-                <Text style={[styles.th, styles.colNum]}>Total kg</Text>
-                <Text style={[styles.th, styles.colNum]}>Planned</Text>
-                <Text style={[styles.th, styles.colNum]}>Actual</Text>
-                <Text style={[styles.th, styles.colNum]}>Vs plan</Text>
+                <Text style={[styles.th, styles.colItem]} numberOfLines={1}>Reference</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Total kg</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Planned</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Actual</Text>
+                <Text style={[styles.th, styles.colNum]} numberOfLines={1}>Vs plan</Text>
               </View>
               {bulkSets
                 .filter((b) => b.status === 'sold')
@@ -657,7 +660,7 @@ export default function BulkSetScreen() {
                     </View>
                   );
                 })}
-            </View>
+            </ScrollableTable>
           </View>
         )}
       </ScrollView>
@@ -683,6 +686,23 @@ function parseQuantity(raw: string): number | null {
   const value = Number(trimmed);
   if (!Number.isFinite(value) || value <= 0) return null;
   return Math.round(value * 100) / 100;
+}
+
+function ScrollableTable({
+  minWidth,
+  children,
+}: {
+  minWidth: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator
+      contentContainerStyle={styles.tableScrollContent}>
+      <View style={[styles.table, styles.tableWide, { minWidth }]}>{children}</View>
+    </ScrollView>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -796,6 +816,8 @@ const styles = StyleSheet.create({
   },
 
   table: { borderRadius: 8, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
+  tableScrollContent: { flexGrow: 1 },
+  tableWide: { flexGrow: 1 },
   tableHeader: {
     flexDirection: 'row',
     backgroundColor: '#F8FAFC',
@@ -826,9 +848,9 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.border,
     gap: 8,
   },
-  colItem: { flex: 2.2 },
-  colQty: { flex: 1.4 },
-  colNum: { flex: 1.3, textAlign: 'right' },
+  colItem: { flex: 2.2, minWidth: 170 },
+  colQty: { flex: 1.4, minWidth: 110 },
+  colNum: { flex: 1.3, minWidth: 96, textAlign: 'right' },
   tdBold: { fontSize: 13, fontWeight: '600', color: Colors.text },
   tdText: { fontSize: 13, color: Colors.textSecondary },
   tdMuted: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },

@@ -189,14 +189,18 @@ export default function ReportsScreen() {
             </View>
           </View>
 
-          <View style={styles.table}>
-            <View style={styles.tableHeader}>
-              <Text style={[styles.th, styles.colAuction]}>Auction</Text>
-              <Text style={[styles.th, styles.colNum]}>Our Bulk</Text>
-              <Text style={[styles.th, styles.colNum]}>Market</Text>
-              <Text style={[styles.th, styles.colNum]}>Difference</Text>
-              <Text style={[styles.th, styles.colVerdict, styles.thRight]}>Result</Text>
-            </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator
+            contentContainerStyle={styles.tableScrollContent}>
+            <View style={[styles.table, styles.auctionTableWide]}>
+              <View style={styles.tableHeader}>
+                <Text style={[styles.th, styles.colAuction]}>Auction</Text>
+                <Text style={[styles.th, styles.colNum]}>Our Bulk</Text>
+                <Text style={[styles.th, styles.colNum]}>Market</Text>
+                <Text style={[styles.th, styles.colNum]}>Difference</Text>
+                <Text style={[styles.th, styles.colVerdict, styles.thRight]}>Result</Text>
+              </View>
 
             {visible.length === 0 && (
               <View style={styles.emptyRow}>
@@ -204,7 +208,7 @@ export default function ReportsScreen() {
               </View>
             )}
 
-            {visible.map((comparison) => {
+              {visible.map((comparison) => {
               const open = expanded === comparison.sellingPeriodId;
               const factoryPrices = open
                 ? selectExternalResultsForPeriod(state, comparison.sellingPeriodId)
@@ -296,8 +300,9 @@ export default function ReportsScreen() {
                   )}
                 </View>
               );
-            })}
-          </View>
+              })}
+            </View>
+          </ScrollView>
         </View>
 
         {/* Our per-item averages over the range */}
@@ -306,27 +311,32 @@ export default function ReportsScreen() {
           <Text style={styles.sectionSubtitle}>
             Mean achieved price per kg over the selected range, one entry per auction.
           </Text>
-          <View style={styles.table}>
-            <View style={styles.tableHeader}>
-              <Text style={[styles.th, styles.colAuction]}>Tea Item</Text>
-              <Text style={[styles.th, styles.colNum]}>Auctions</Text>
-              <Text style={[styles.th, styles.colNum]}>Average (Rs/kg)</Text>
-            </View>
-            {itemAverages.map((average) => (
-              <View key={average.teaItemId} style={styles.tableRow}>
-                <View style={styles.colAuction}>
-                  <Text style={styles.tdBold}>{average.teaItemCode}</Text>
-                  <Text style={styles.tdMuted}>{average.teaItemName}</Text>
-                </View>
-                <Text style={[styles.tdText, styles.colNum]}>{average.periodsCounted}</Text>
-                <Text style={[styles.tdBold, styles.colNum]}>
-                  {average.averagePricePerKg === null
-                    ? 'no history'
-                    : formatRs(average.averagePricePerKg)}
-                </Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator
+            contentContainerStyle={styles.tableScrollContent}>
+            <View style={[styles.table, styles.itemAveragesTableWide]}>
+              <View style={styles.tableHeader}>
+                <Text style={[styles.th, styles.colAuction]}>Tea Item</Text>
+                <Text style={[styles.th, styles.colNum]}>Auctions</Text>
+                <Text style={[styles.th, styles.colNum]}>Average (Rs/kg)</Text>
               </View>
-            ))}
-          </View>
+              {itemAverages.map((average) => (
+                <View key={average.teaItemId} style={styles.tableRow}>
+                  <View style={styles.colAuction}>
+                    <Text style={styles.tdBold}>{average.teaItemCode}</Text>
+                    <Text style={styles.tdMuted}>{average.teaItemName}</Text>
+                  </View>
+                  <Text style={[styles.tdText, styles.colNum]}>{average.periodsCounted}</Text>
+                  <Text style={[styles.tdBold, styles.colNum]}>
+                    {average.averagePricePerKg === null
+                      ? 'no history'
+                      : formatRs(average.averagePricePerKg)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -395,6 +405,9 @@ const styles = StyleSheet.create({
   sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2, lineHeight: 17 },
 
   table: { borderRadius: 8, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
+  tableScrollContent: { flexGrow: 1 },
+  auctionTableWide: { minWidth: 680, flexGrow: 1 },
+  itemAveragesTableWide: { minWidth: 440, flexGrow: 1 },
   tableHeader: {
     flexDirection: 'row',
     backgroundColor: '#F8FAFC',
@@ -418,9 +431,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   tableRowOpen: { backgroundColor: '#F8FAFC' },
-  colAuction: { flex: 2.2 },
-  colNum: { flex: 1.3, textAlign: 'right' },
-  colVerdict: { flex: 1.6, alignItems: 'flex-end' },
+  colAuction: { width: 190, flexShrink: 0 },
+  colNum: { width: 105, flexShrink: 0, textAlign: 'right' },
+  colVerdict: { width: 120, flexShrink: 0, alignItems: 'flex-end' },
   tdBold: { fontSize: 13, fontWeight: '600', color: Colors.text },
   tdText: { fontSize: 13, color: Colors.textSecondary },
   tdMuted: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },

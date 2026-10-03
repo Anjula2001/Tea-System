@@ -1,4 +1,4 @@
-import { usePathname, useRouter } from 'expo-router';
+import { usePathname, useRouter, type Href } from 'expo-router';
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Colors } from '@/constants/colors';
@@ -14,6 +14,12 @@ const MAIN_NAV_PATHS = new Set([
   '/market',
   '/reports',
 ]);
+
+const DETAIL_BACK_PATHS: Record<string, Href> = {
+  '/tea-item': '/item-averages',
+  '/factory': '/market',
+  '/profile': '/',
+};
 
 /**
  * Every screen's top bar.
@@ -49,12 +55,13 @@ export default function Header({
   const pathname = usePathname();
   const { width } = useWindowDimensions();
   const showBackButton = width < 768 && !MAIN_NAV_PATHS.has(pathname);
+  const backPath = DETAIL_BACK_PATHS[pathname] ?? '/';
   return (
     <View style={styles.headerContainer}>
       {showBackButton && (
         <TouchableOpacity
           style={styles.backButton}
-          onPress={() => router.back()}
+          onPress={() => router.replace(backPath)}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel="Go back">

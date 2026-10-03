@@ -1,9 +1,19 @@
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Colors } from '@/constants/colors';
 import { BellIcon, ChevronLeftIcon } from '@/components/ui-icons';
 import { useTeaStore } from '@/store/tea-store';
+
+const MAIN_NAV_PATHS = new Set([
+  '/',
+  '/index',
+  '/price-input',
+  '/bulk-creation',
+  '/item-averages',
+  '/market',
+  '/reports',
+]);
 
 /**
  * Every screen's top bar.
@@ -36,11 +46,12 @@ export default function Header({
 }: HeaderProps) {
   const profile = useTeaStore((s) => s.factoryProfile);
   const router = useRouter();
+  const pathname = usePathname();
   const { width } = useWindowDimensions();
-  const isMobile = width < 768;
+  const showBackButton = width < 768 && !MAIN_NAV_PATHS.has(pathname);
   return (
     <View style={styles.headerContainer}>
-      {isMobile && (
+      {showBackButton && (
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.back()}

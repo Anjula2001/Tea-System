@@ -904,56 +904,61 @@ export default function AuctionResultsScreen() {
               </View>
 
               {/* How each line reached that figure */}
-              <View style={styles.blendTable}>
-                <View style={styles.blendTableHeader}>
-                  <Text style={[styles.blendTh, styles.blendColItem]}>Tea Item</Text>
-                  <Text style={[styles.blendTh, styles.blendColNum]}>Quantity</Text>
-                  <Text style={[styles.blendTh, styles.blendColNum]}>Planned</Text>
-                  <Text style={[styles.blendTh, styles.blendColNum]}>Actual</Text>
-                  <Text style={[styles.blendTh, styles.blendColNum]}>Share</Text>
-                </View>
-                {blend.lines.map((line) => {
-                  const priced = line.ourAveragePricePerKg !== null;
-                  const planned = plannedByItem.get(line.teaItemId) ?? null;
-                  const move = compare(line.ourAveragePricePerKg, planned);
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator
+                contentContainerStyle={styles.blendTableScrollContent}>
+                <View style={styles.blendTable}>
+                  <View style={styles.blendTableHeader}>
+                    <Text style={[styles.blendTh, styles.blendColItem]}>Tea Item</Text>
+                    <Text style={[styles.blendTh, styles.blendColNum]}>Quantity</Text>
+                    <Text style={[styles.blendTh, styles.blendColNum]}>Planned</Text>
+                    <Text style={[styles.blendTh, styles.blendColNum]}>Actual</Text>
+                    <Text style={[styles.blendTh, styles.blendColNum]}>Share</Text>
+                  </View>
+                  {blend.lines.map((line) => {
+                    const priced = line.ourAveragePricePerKg !== null;
+                    const planned = plannedByItem.get(line.teaItemId) ?? null;
+                    const move = compare(line.ourAveragePricePerKg, planned);
 
-                  return (
-                    <View key={line.teaItemId} style={styles.blendTableRow}>
-                      <Pressable
-                        style={({ pressed }) => [styles.blendColItem, pressed && { opacity: 0.7 }]}
-                        onPress={() =>
-                          router.push({ pathname: '/tea-item', params: { id: line.teaItemId } })
-                        }>
-                        <Text style={styles.blendTdBold}>
-                          {line.teaItemCode} <Text style={{ color: Colors.primary, fontSize: 11 }}>›</Text>
+                    return (
+                      <View key={line.teaItemId} style={styles.blendTableRow}>
+                        <Pressable
+                          style={({ pressed }) => [styles.blendColItem, pressed && { opacity: 0.7 }]}
+                          onPress={() =>
+                            router.push({ pathname: '/tea-item', params: { id: line.teaItemId } })
+                          }>
+                          <Text style={styles.blendTdBold}>
+                            {line.teaItemCode} <Text style={{ color: Colors.primary, fontSize: 11 }}>›</Text>
+                          </Text>
+                          <Text style={styles.blendTdMuted}>{line.teaItemName}</Text>
+                        </Pressable>
+                        <Text style={[styles.blendTdText, styles.blendColNum]}>
+                          {formatKg(line.quantityKg)} kg
                         </Text>
-                        <Text style={styles.blendTdMuted}>{line.teaItemName}</Text>
-                      </Pressable>
-                      <Text style={[styles.blendTdText, styles.blendColNum]}>
-                        {formatKg(line.quantityKg)} kg
-                      </Text>
-                      <Text style={[styles.blendTdText, styles.blendColNum]}>
-                        {formatRs(planned)}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.blendTdBold,
-                          styles.blendColNum,
-                          !priced && styles.blendTdWaiting,
-                          priced &&
-                            move.verdict !== 'unknown' && {
-                              color: move.verdict === 'below' ? Colors.below : Colors.above,
-                            },
-                        ]}>
-                        {priced ? formatRs(line.ourAveragePricePerKg) : 'not entered'}
-                      </Text>
-                      <Text style={[styles.blendTdText, styles.blendColNum]}>
-                        {formatPercent(line.shareOfValue)}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
+                        <Text style={[styles.blendTdText, styles.blendColNum]}>
+                          {formatRs(planned)}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.blendTdBold,
+                            styles.blendColNum,
+                            !priced && styles.blendTdWaiting,
+                            priced &&
+                              move.verdict !== 'unknown' && {
+                                color: move.verdict === 'below' ? Colors.below : Colors.above,
+                              },
+                          ]}>
+                          {priced ? formatRs(line.ourAveragePricePerKg) : 'not entered'}
+                        </Text>
+                        <Text style={[styles.blendTdText, styles.blendColNum]}>
+                          {formatPercent(line.shareOfValue)}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </ScrollView>
 
               <Text style={styles.blendTableNote}>
                 Planned prices here are the plan&rsquo;s own — our item averages across the
@@ -1552,7 +1557,15 @@ const styles = StyleSheet.create({
   },
   overrideToggleText: { fontSize: 12, fontWeight: '600', color: Colors.primary },
 
-  blendTable: { borderRadius: 8, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
+  blendTableScrollContent: { flexGrow: 1 },
+  blendTable: {
+    minWidth: 590,
+    flexGrow: 1,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
   blendTableHeader: {
     flexDirection: 'row',
     backgroundColor: '#F8FAFC',
@@ -1572,8 +1585,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
     gap: 8,
   },
-  blendColItem: { flex: 2 },
-  blendColNum: { flex: 1.1, textAlign: 'right' },
+  blendColItem: { width: 170, flexShrink: 0 },
+  blendColNum: { width: 95, flexShrink: 0, textAlign: 'right' },
   blendTdBold: { fontSize: 13, fontWeight: '600', color: Colors.text },
   blendTdText: { fontSize: 13, color: Colors.textSecondary },
   blendTdMuted: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },

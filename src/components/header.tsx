@@ -1,8 +1,8 @@
 import { useRouter } from 'expo-router';
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Colors } from '@/constants/colors';
-import { BellIcon } from '@/components/ui-icons';
+import { BellIcon, ChevronLeftIcon } from '@/components/ui-icons';
 import { useTeaStore } from '@/store/tea-store';
 
 /**
@@ -36,8 +36,20 @@ export default function Header({
 }: HeaderProps) {
   const profile = useTeaStore((s) => s.factoryProfile);
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
   return (
     <View style={styles.headerContainer}>
+      {isMobile && (
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => router.back()}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Go back">
+          <ChevronLeftIcon color={Colors.text} size={22} />
+        </TouchableOpacity>
+      )}
       <View style={styles.leftContent}>
         <Text style={styles.greetingText}>{greeting}</Text>
         <Text style={styles.subTitleText}>{subTitle}</Text>
@@ -89,6 +101,17 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     paddingHorizontal: 20,
     backgroundColor: Colors.background,
+  },
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: Colors.card,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginRight: 12,
   },
   leftContent: {
     flex: 1,

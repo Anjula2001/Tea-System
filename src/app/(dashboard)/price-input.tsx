@@ -799,6 +799,7 @@ export default function AuctionResultsScreen() {
             icon={<ChartIcon color={Colors.primary} size={18} />}
             tint="#F0FDF4"
             title="Our Bulk Set Price — Planned vs Actual"
+            subtitleStyle={styles.sectionSubtitleJustified}
             subtitle="The set you planned on Prepare Bulk Set, re-priced at what its grades actually fetched today. Same grades, same kilos — only the prices are new. The actual figure is what compares directly against other factories."
           />
 
@@ -1252,18 +1253,20 @@ function SectionHeading({
   tint,
   title,
   subtitle,
+  subtitleStyle,
 }: {
   icon: React.ReactNode;
   tint: string;
   title: string;
   subtitle: string;
+  subtitleStyle?: React.ComponentProps<typeof Text>['style'];
 }) {
   return (
     <View style={styles.headingRow}>
       <View style={[styles.headingIcon, { backgroundColor: tint }]}>{icon}</View>
       <View style={styles.headingText}>
         <Text style={styles.sectionTitle}>{title}</Text>
-        <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+        <Text style={[styles.sectionSubtitle, subtitleStyle]}>{subtitle}</Text>
       </View>
     </View>
   );
@@ -1397,6 +1400,7 @@ const styles = StyleSheet.create({
   headingText: { flex: 1 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
   sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2, lineHeight: 17 },
+  sectionSubtitleJustified: { textAlign: 'justify' },
 
   inputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
   // flexBasis + maxWidth rather than flex:1 — otherwise a short final row

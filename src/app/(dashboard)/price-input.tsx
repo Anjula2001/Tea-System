@@ -737,6 +737,7 @@ export default function AuctionResultsScreen() {
             icon={<LeafIcon color={Colors.primary} size={18} />}
             tint={Colors.primaryLight}
             title="Our Tea Item Prices"
+            subtitleStyle={styles.sectionSubtitleJustified}
             subtitleFullWidth
             subtitle="What 1 kg of each item fetched at this auction, each set against that grade's own average from earlier auctions."
           />
@@ -1027,6 +1028,7 @@ export default function AuctionResultsScreen() {
             icon={<MoneyIcon color="#B8860B" size={18} />}
             tint="#FFF8E1"
             title="Other Factories' Bulk Prices"
+            subtitleStyle={styles.sectionSubtitleJustified}
             subtitleFullWidth
             subtitle="One blended figure per factory, read from the published auction reports. They differ because each factory sold a different mix — and none of them report per tea item."
           />

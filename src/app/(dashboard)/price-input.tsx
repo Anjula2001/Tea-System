@@ -737,6 +737,7 @@ export default function AuctionResultsScreen() {
             icon={<LeafIcon color={Colors.primary} size={18} />}
             tint={Colors.primaryLight}
             title="Our Tea Item Prices"
+            subtitleFullWidth
             subtitle="What 1 kg of each item fetched at this auction, each set against that grade's own average from earlier auctions."
           />
           {/* What moved, at a glance, before reading the grid item by item */}

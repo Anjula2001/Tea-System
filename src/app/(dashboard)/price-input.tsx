@@ -1555,7 +1555,12 @@ const styles = StyleSheet.create({
   blendMeta: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   blendSource: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16, fontStyle: 'italic' },
   blendNarrowed: { fontSize: 11, color: '#8A6D1F', lineHeight: 16, marginTop: 10 },
-  blendTableNote: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
+  blendTableNote: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    lineHeight: 16,
+    textAlign: 'justify',
+  },
 
   factoryHint: { fontSize: 11, color: Colors.textSecondary, lineHeight: 15 },
   marketRecapEmpty: {

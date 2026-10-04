@@ -800,6 +800,7 @@ export default function AuctionResultsScreen() {
             tint="#F0FDF4"
             title="Our Bulk Set Price — Planned vs Actual"
             subtitleStyle={styles.sectionSubtitleJustified}
+            subtitleFullWidth
             subtitle="The set you planned on Prepare Bulk Set, re-priced at what its grades actually fetched today. Same grades, same kilos — only the prices are new. The actual figure is what compares directly against other factories."
           />
 
@@ -1254,20 +1255,31 @@ function SectionHeading({
   title,
   subtitle,
   subtitleStyle,
+  subtitleFullWidth = false,
 }: {
   icon: React.ReactNode;
   tint: string;
   title: string;
   subtitle: string;
   subtitleStyle?: React.ComponentProps<typeof Text>['style'];
+  subtitleFullWidth?: boolean;
 }) {
   return (
-    <View style={styles.headingRow}>
-      <View style={[styles.headingIcon, { backgroundColor: tint }]}>{icon}</View>
-      <View style={styles.headingText}>
-        <Text style={styles.sectionTitle}>{title}</Text>
-        <Text style={[styles.sectionSubtitle, subtitleStyle]}>{subtitle}</Text>
+    <View>
+      <View style={styles.headingRow}>
+        <View style={[styles.headingIcon, { backgroundColor: tint }]}>{icon}</View>
+        <View style={styles.headingText}>
+          <Text style={styles.sectionTitle}>{title}</Text>
+          {!subtitleFullWidth && (
+            <Text style={[styles.sectionSubtitle, subtitleStyle]}>{subtitle}</Text>
+          )}
+        </View>
       </View>
+      {subtitleFullWidth && (
+        <Text style={[styles.sectionSubtitle, styles.sectionSubtitleFullWidth, subtitleStyle]}>
+          {subtitle}
+        </Text>
+      )}
     </View>
   );
 }
@@ -1401,6 +1413,7 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
   sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2, lineHeight: 17 },
   sectionSubtitleJustified: { textAlign: 'justify' },
+  sectionSubtitleFullWidth: { marginTop: 8 },
 
   inputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
   // flexBasis + maxWidth rather than flex:1 — otherwise a short final row

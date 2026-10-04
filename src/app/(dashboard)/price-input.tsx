@@ -1027,6 +1027,7 @@ export default function AuctionResultsScreen() {
             icon={<MoneyIcon color="#B8860B" size={18} />}
             tint="#FFF8E1"
             title="Other Factories' Bulk Prices"
+            subtitleFullWidth
             subtitle="One blended figure per factory, read from the published auction reports. They differ because each factory sold a different mix — and none of them report per tea item."
           />
 

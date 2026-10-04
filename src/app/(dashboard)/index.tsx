@@ -529,7 +529,7 @@ const styles = StyleSheet.create({
   actionIconCircle: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   actionTextGroup: { flex: 1 },
   actionTitle: { fontSize: 14, fontWeight: '600', color: Colors.text },
-  actionDesc: { fontSize: 12, color: Colors.textSecondary },
+  actionDesc: { fontSize: 12, color: Colors.textSecondary, textAlign: 'justify' },
 
   sectionCard: {
     backgroundColor: Colors.card,
@@ -547,7 +547,13 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
-  sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  sectionSubtitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+    lineHeight: 17,
+    textAlign: 'justify',
+  },
   viewAllText: { fontSize: 13, fontWeight: '600', color: Colors.primary },
 
   /* Three columns, wide enough that they never wrap — see `figuresAsColumns`. */

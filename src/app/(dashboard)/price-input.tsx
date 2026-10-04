@@ -1115,7 +1115,7 @@ export default function AuctionResultsScreen() {
             </>
           )}
 
-          <Text style={styles.marketRecapNote}>
+          <Text style={[styles.marketRecapNote, styles.sectionSubtitleJustified]}>
             These make the market benchmark below — a flat average of the factories priced for this
             auction, unweighted because their bulk weights are never published. The Market tab
             holds the same figures over any date period, and is where a new factory is added.

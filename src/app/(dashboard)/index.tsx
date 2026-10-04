@@ -189,19 +189,17 @@ export default function DashboardScreen() {
         {pendingSet && valuation && (
           <View style={styles.sectionCard}>
             <View style={styles.sectionHeaderRow}>
-              <View style={styles.flexOne}>
-                <Text style={styles.sectionTitle}>
-                  Upcoming Bulk Set · {pendingSet.reference}
-                </Text>
-                <Text style={styles.sectionSubtitle}>
-                  {formatKg(valuation.totalQuantityKg)} kg valued at our own item averages,
-                  quantity-weighted. The actual figure follows once it sells.
-                </Text>
-              </View>
+              <Text style={styles.sectionTitle}>
+                Upcoming Bulk Set · {pendingSet.reference}
+              </Text>
               <Pressable onPress={() => router.push('/bulk-creation')}>
                 <Text style={styles.viewAllText}>Edit set</Text>
               </Pressable>
             </View>
+            <Text style={styles.sectionSubtitle}>
+              {formatKg(valuation.totalQuantityKg)} kg valued at our own item averages,
+              quantity-weighted. The actual figure follows once it sells.
+            </Text>
 
             <View style={figuresAsColumns ? styles.expectedRow : styles.expectedStack}>
               {[
